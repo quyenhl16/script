@@ -9,12 +9,12 @@ sed -i "%d" abc.txt
 
 #---Ex2.1: Replace string "abc" by "xyz" in file abc.txt ----#
 sed -i 's/abc/xyz/g' abc.txt
-*Note: '/' using to delimiter, we can also using other character like: '@'; '+', '\'
+#*Note: '/' using to delimiter, we can also using other character like: '@'; '+', '\'
 #---Ex2.1: Replace string "abc" by variable $r in file abc.txt ----#
 sed -i "s/abc/$r/g" abc.txt
-*Note: If uses varriable, we need use double quote "".
+#*Note: If uses varriable, we need use double quote "".
 
 # ---- 3. Replace value in yaml file ------- #
 #---Ex3.1: Replace value in key "field" by "xyz" in file abc.yaml ----#
 sed -i 's/field: .*/field: xyz/g' abc.yaml
-*Note: If uses varriable, we need use double quote "".
+#*Note: If uses varriable, we need use double quote "".
