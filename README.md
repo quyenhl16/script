@@ -2,7 +2,7 @@
 
 `syssetup` là tool cấu hình hệ thống có thể mở rộng cho CentOS, RHEL, Rocky Linux và AlmaLinux. Go chịu trách nhiệm CLI/TUI, validation, dependency, timeout và logging; Bash thực hiện thay đổi hệ thống.
 
-Tool không cần dependency Go bên ngoài và có thể build offline.
+Giao diện dashboard sử dụng Bubble Tea, Bubbles và Lip Gloss. Dependency được quản lý bằng Go Modules; máy đích không cần Go nếu dùng release binary.
 
 ## Kiến trúc
 
@@ -21,6 +21,7 @@ Mỗi thư mục `features/<id>/` là một package độc lập gồm `feature.
 ## Bắt đầu
 
 ```bash
+go mod download
 go test ./...
 go build -o bin/syssetup ./cmd/syssetup
 
@@ -37,6 +38,31 @@ Hoặc:
 chmod +x setup.sh
 sudo ./setup.sh tui
 ```
+
+## TUI dashboard
+
+TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
+
+- `Features`: bảng feature, trạng thái, version, quyền thực thi và panel chi tiết.
+- `Plan`: thứ tự thực thi sau khi resolve dependency.
+- `Logs`: output cập nhật trong lúc runner hoạt động.
+- Layout tự thích nghi; panel chi tiết được ẩn trên terminal hẹp.
+
+Phím tắt:
+
+| Phím | Chức năng |
+|---|---|
+| `j/k`, `↑/↓` | Di chuyển |
+| `Space`, `Enter` | Chọn hoặc bỏ chọn feature |
+| `/` | Lọc feature |
+| `a`, `n` | Chọn tất cả feature đang hiển thị hoặc bỏ chọn tất cả |
+| `1/2/3`, `Tab` | Chuyển Features, Plan và Logs |
+| `r` | Chạy execution plan |
+| `c` | Hủy plan đang chạy |
+| `?` | Hiện trợ giúp |
+| `q` | Thoát |
+
+Khi build từ source cần Go 1.24 trở lên. Binary đã build vẫn có thể chạy độc lập trên server đích.
 
 Log mặc định được ghi vào `syssetup.log`. Có thể đổi bằng `--log /var/log/syssetup.log`.
 

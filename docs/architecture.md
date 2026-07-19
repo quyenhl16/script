@@ -38,7 +38,8 @@ Dependency luôn chạy trước feature phụ thuộc và chỉ xuất hiện m
 - `registry`: khám phá feature, validation và dependency resolution.
 - `platform`: nhận diện `/etc/os-release` và quyền root.
 - `runner`: timeout, process execution, output và log.
-- `ui`: giao diện terminal; chỉ gọi public API của registry/runner.
+- `ui`: dashboard Bubble Tea gồm bảng feature, execution plan, live logs và
+  panel chi tiết; chỉ gọi public API của registry/runner.
 - `cmd/syssetup`: parse CLI và ghép các component.
 
 ## Feature API v1

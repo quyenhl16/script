@@ -7,7 +7,7 @@ BINARY="$PROJECT_DIR/bin/syssetup"
 if [[ ! -x "$BINARY" ]]; then
   if ! command -v go >/dev/null 2>&1; then
     echo "syssetup binary is missing and Go is not installed." >&2
-    echo "Copy a release binary to $BINARY or install Go 1.22+." >&2
+    echo "Copy a release binary to $BINARY or install Go 1.24+." >&2
     exit 1
   fi
   mkdir -p "$PROJECT_DIR/bin"
