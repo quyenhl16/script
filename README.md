@@ -108,7 +108,37 @@ Sau đó thêm `{"id":"nginx"}` vào một file trong `profiles/`. Không cần 
 make build-linux
 ```
 
-Đóng gói binary trong `dist/` cùng `features/`, `profiles/` và `scripts/`. Máy đích chỉ cần Bash và các tiện ích hệ thống chuẩn; không cần cài Go nếu sử dụng binary release.
+Đóng gói đầy đủ runtime cho cả Linux `amd64` và `arm64`:
+
+```bash
+make package
+```
+
+Hoặc chỉ đóng gói một kiến trúc và tùy chọn version:
+
+```bash
+make package-linux-amd64 VERSION=0.2.0
+make package-linux-arm64 VERSION=0.2.0
+```
+
+Kết quả:
+
+```text
+dist/
+├── syssetup-0.2.0-linux-amd64.tar.gz
+└── syssetup-0.2.0-linux-arm64.tar.gz
+```
+
+Mỗi archive chứa `bin/syssetup`, `features/`, `profiles/`, `scripts/`,
+`setup.sh` và `README.md`. Giải nén trên server rồi chạy từ thư mục vừa tạo:
+
+```bash
+tar -xzf syssetup-0.2.0-linux-amd64.tar.gz
+cd syssetup-0.2.0-linux-amd64
+sudo ./setup.sh tui
+```
+
+Máy đích chỉ cần Bash và các tiện ích hệ thống chuẩn; không cần cài Go nếu sử dụng binary release.
 
 ## An toàn
 

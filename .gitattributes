@@ -1,0 +1,5 @@
+* text=auto
+
+# Runtime scripts must keep Unix line endings when packaged on Windows.
+*.sh text eol=lf
+Makefile text eol=lf
