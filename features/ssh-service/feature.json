@@ -1,0 +1,12 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "ssh-service",
+  "name": "SSH service",
+  "version": "1.0.0",
+  "description": "Install and enable the OpenSSH server",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": true,
+  "timeoutSeconds": 300,
+  "dependsOn": ["check-os"]
+}

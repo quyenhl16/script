@@ -1,0 +1,11 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "check-os",
+  "name": "Check operating system",
+  "version": "1.0.0",
+  "description": "Validate the RHEL-compatible operating system",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 30
+}

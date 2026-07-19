@@ -1,0 +1,19 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "base-packages",
+  "name": "Base packages",
+  "version": "1.0.0",
+  "description": "Install common administration utilities",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": true,
+  "timeoutSeconds": 900,
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "packages": {
+      "type": "string",
+      "description": "Space-separated RPM package names",
+      "default": "curl wget git vim jq tar unzip"
+    }
+  }
+}
