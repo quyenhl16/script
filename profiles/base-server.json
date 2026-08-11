@@ -1,16 +1,10 @@
 {
   "apiVersion": "syssetup/v1",
   "name": "base-server",
-  "description": "A minimal RHEL-compatible server",
+  "description": "Validate a RHEL-compatible server",
   "features": [
     {
-      "id": "base-packages",
-      "parameters": {
-        "packages": "curl wget git vim jq tar unzip"
-      }
-    },
-    {
-      "id": "ssh-service"
+      "id": "check-os"
     }
   ]
 }
