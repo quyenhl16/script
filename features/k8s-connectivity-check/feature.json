@@ -1,0 +1,69 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "k8s-connectivity-check",
+  "name": "Kubernetes connectivity check",
+  "version": "1.0.0",
+  "description": "Audit pod VIPs, OSPF adjacencies and 5G network connectivity",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 900,
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "phase": {
+      "type": "string",
+      "description": "Checklist phase: vip, ospf, ping or all",
+      "default": "all"
+    },
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace containing the target pods",
+      "default": "pramf01"
+    },
+    "vip_comm": {
+      "type": "string",
+      "description": "COMM virtual IP",
+      "default": "68.240.36.9"
+    },
+    "vip_ipgw": {
+      "type": "string",
+      "description": "IPGW virtual IP",
+      "default": "68.240.36.1"
+    },
+    "vip_gtp": {
+      "type": "string",
+      "description": "GTP virtual IP",
+      "default": "68.240.36.96"
+    },
+    "ip_ausf": {
+      "type": "string",
+      "description": "Remote AUSF IP",
+      "default": "68.240.36.153"
+    },
+    "ip_udm": {
+      "type": "string",
+      "description": "Remote UDM IP",
+      "default": "68.240.36.153"
+    },
+    "ip_smf": {
+      "type": "string",
+      "description": "Remote SMF IP",
+      "default": "68.240.36.105"
+    },
+    "ip_amf_remote": {
+      "type": "string",
+      "description": "Remote AMF IP",
+      "default": "68.240.36.9"
+    },
+    "ip_nrf": {
+      "type": "string",
+      "description": "Remote NRF IP",
+      "default": "68.240.36.193"
+    },
+    "ip_gnodeb": {
+      "type": "string",
+      "description": "gNodeB IP",
+      "default": "69.69.0.150"
+    }
+  }
+}

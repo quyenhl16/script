@@ -32,6 +32,17 @@ sudo ./bin/syssetup run --profile profiles/base-server.json
 sudo ./bin/syssetup tui --profile profiles/base-server.json
 ```
 
+Kiểm tra VIP, OSPF và kết nối mạng của workload Kubernetes `pramf01`:
+
+```bash
+./bin/syssetup plan --profile profiles/pramf01-connectivity.json
+./bin/syssetup run --profile profiles/pramf01-connectivity.json
+```
+
+Đổi `phase` trong profile thành `vip`, `ospf`, `ping` hoặc `all` để chọn
+phạm vi kiểm tra. Namespace, VIP và địa chỉ NF đích đều có thể cấu hình trong
+`parameters` của feature `k8s-connectivity-check`.
+
 Hoặc:
 
 ```bash

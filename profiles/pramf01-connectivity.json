@@ -1,0 +1,23 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "pramf01-connectivity",
+  "description": "VIP, OSPF and 5G connectivity audit for namespace pramf01",
+  "features": [
+    {
+      "id": "k8s-connectivity-check",
+      "parameters": {
+        "phase": "all",
+        "namespace": "pramf01",
+        "vip_comm": "68.240.36.9",
+        "vip_ipgw": "68.240.36.1",
+        "vip_gtp": "68.240.36.96",
+        "ip_ausf": "68.240.36.153",
+        "ip_udm": "68.240.36.153",
+        "ip_smf": "68.240.36.105",
+        "ip_amf_remote": "68.240.36.9",
+        "ip_nrf": "68.240.36.193",
+        "ip_gnodeb": "69.69.0.150"
+      }
+    }
+  ]
+}
