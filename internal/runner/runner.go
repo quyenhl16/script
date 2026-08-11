@@ -119,7 +119,8 @@ func (r *Runner) runAction(parent context.Context, item domain.ResolvedFeature, 
 	script := filepath.Join(item.Feature.Directory, item.Feature.Entrypoint)
 	cmd := exec.CommandContext(ctx, "/usr/bin/env", "bash", script, action)
 	cmd.Env = append(os.Environ(), parameterEnvironment(item.Parameters)...)
-	output := r.options.Output
+	displayOutput := newStatusColorWriter(r.options.Output, statusColorsEnabled())
+	var output io.Writer = displayOutput
 	if r.logFile != nil {
 		output = io.MultiWriter(output, r.logFile)
 		fmt.Fprintf(r.logFile, "%s feature=%s action=%s\n", time.Now().Format(time.RFC3339), item.Feature.ID, action)
@@ -127,10 +128,16 @@ func (r *Runner) runAction(parent context.Context, item domain.ResolvedFeature, 
 	cmd.Stdout = output
 	cmd.Stderr = output
 	err := cmd.Run()
+	flushErr := displayOutput.Flush()
 	if ctx.Err() == context.DeadlineExceeded {
 		return fmt.Errorf("timed out after %s", timeout)
 	}
-	return err
+	return errors.Join(err, flushErr)
+}
+
+func statusColorsEnabled() bool {
+	_, disabled := os.LookupEnv("NO_COLOR")
+	return !disabled
 }
 
 func parameterEnvironment(parameters map[string]any) []string {
