@@ -27,11 +27,12 @@ type Server struct {
 }
 
 type Request struct {
-	Servers  []Server
-	Command  string
-	Script   []byte
-	Timeout  time.Duration
-	HostKeys ssh.HostKeyCallback
+	Servers    []Server
+	Command    string
+	Script     []byte
+	ScriptArgs []string
+	Timeout    time.Duration
+	HostKeys   ssh.HostKeyCallback
 }
 
 type Result struct {
@@ -159,6 +160,10 @@ func executeOne(parent context.Context, server Server, request Request) (result 
 		result.Err = errors.New("choose either command or script")
 		return
 	}
+	if len(request.Script) == 0 && len(request.ScriptArgs) > 0 {
+		result.Err = errors.New("script arguments require a script")
+		return
+	}
 	if request.HostKeys == nil {
 		result.Err = errors.New("host key verifier is required")
 		return
@@ -217,7 +222,14 @@ func executeOne(parent context.Context, server Server, request Request) (result 
 
 	command := request.Command
 	if len(request.Script) > 0 {
-		command = "sh -s --"
+		command = "bash -s --"
+		for _, argument := range request.ScriptArgs {
+			if strings.ContainsRune(argument, 0) {
+				result.Err = errors.New("script argument contains a null byte")
+				return
+			}
+			command += " " + quoteShellArgument(argument)
+		}
 	}
 	done := make(chan struct{})
 	var output []byte
@@ -238,6 +250,10 @@ func executeOne(parent context.Context, server Server, request Request) (result 
 		}
 	}
 	return
+}
+
+func quoteShellArgument(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'"
 }
 
 // NewTOFUHostKeyCallback trusts a host on first use and stores its public key.

@@ -54,7 +54,8 @@ sudo ./setup.sh tui
 
 TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
 
-- `Features`: bảng feature, trạng thái, version, quyền thực thi và panel chi tiết.
+- `Features`: bảng feature được đánh số và sắp xếp alphabet theo ID, cùng trạng
+  thái, version, quyền thực thi và panel chi tiết. Index vẫn giữ nguyên khi lọc.
 - `Plan`: thứ tự thực thi sau khi resolve dependency.
 - `Logs`: output cập nhật trong lúc runner hoạt động.
 - `Remote SSH`: nhập danh sách server, user, password để chạy Linux command
@@ -83,6 +84,36 @@ Các server chạy song song với timeout 30 giây/server và kết quả đư�
 riêng. Password chỉ được giữ trong bộ nhớ; host key được lưu theo cơ chế
 trust-on-first-use tại thư mục cấu hình người dùng và bị từ chối nếu thay đổi ở
 lần kết nối sau.
+
+### Tạo Bond VLAN qua SSH
+
+Feature `create-bond-vlan` được đóng gói sẵn để tạo VLAN trên
+bond interface của các server RHEL-compatible:
+
+1. Tìm `create-bond-vlan` trong tab `Features` và nhấn `Enter`; giao diện sẽ mở
+   `Remote SSH` và nạp script tương ứng.
+2. Nhập server, tài khoản `root`, password và trường `Args`, ví dụ:
+   `bond2.306 ip=10.0.36.87 prefix=24 gateway=10.0.36.254`.
+3. Nhấn `F5` để chạy đồng thời trên các server.
+
+Script kiểm tra interface/VLAN/IPv4/prefix, yêu cầu `ip` đi cùng `prefix`, sao
+lưu file cấu hình cũ trước khi thay đổi và chỉ chấp nhận VLAN ID từ 1 đến 4094.
+Mỗi argument được quote riêng trước khi gửi qua SSH; script chạy bằng `bash` và
+yêu cầu SSH trực tiếp bằng tài khoản `root`.
+
+### Tạo danh sách thư mục qua SSH
+
+Feature `create-local-path` tạo một hoặc nhiều thư mục trên tất cả server đã
+nhập. Chọn feature trong tab `Features`, nhập thông tin SSH rồi cấu hình `Args`:
+
+```text
+/data/app /data/log /opt/company/cache mode=0755 owner=root group=root
+```
+
+Đường dẫn phải là đường dẫn tuyệt đối và không chứa khoảng trắng. Các tùy chọn
+`mode`, `owner`, `group` áp dụng cho mọi thư mục trong danh sách; giá trị mặc
+định lần lượt là `0755`, `root`, `root`. Script từ chối `/`, thành phần `.`/`..`,
+đường dẫn đang là file và user/group không tồn tại.
 
 Khi build từ source cần Go 1.24 trở lên. Binary đã build vẫn có thể chạy độc lập trên server đích.
 

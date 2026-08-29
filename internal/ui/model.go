@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -43,6 +44,7 @@ const (
 	sshPassword
 	sshCommandValue
 	sshScriptPath
+	sshScriptArgs
 )
 
 type runFinishedMsg struct {
@@ -63,6 +65,7 @@ type model struct {
 	profile           domain.Profile
 	options           runner.Options
 	features          []domain.Feature
+	featureIndexes    map[string]int
 	selected          map[string]bool
 	profileParameters map[string]map[string]any
 	statuses          map[string]domain.Status
@@ -115,6 +118,7 @@ func newModel(ctx context.Context, registry *registry.Registry, profile domain.P
 		profile:           profile,
 		options:           options,
 		features:          registry.List(),
+		featureIndexes:    make(map[string]int),
 		selected:          make(map[string]bool),
 		profileParameters: make(map[string]map[string]any),
 		statuses:          make(map[string]domain.Status),
@@ -125,8 +129,9 @@ func newModel(ctx context.Context, registry *registry.Registry, profile domain.P
 			table.WithHeight(10),
 			table.WithColumns([]table.Column{
 				{Title: "", Width: 3},
+				{Title: "#", Width: 4},
 				{Title: "STATUS", Width: 9},
-				{Title: "FEATURE", Width: 40},
+				{Title: "FEATURE", Width: 35},
 				{Title: "VERSION", Width: 9},
 				{Title: "AS", Width: 6},
 			}),
@@ -140,6 +145,9 @@ func newModel(ctx context.Context, registry *registry.Registry, profile domain.P
 	}
 	m.sshInputs = newSSHInputs()
 	m.sshOutput.SetContent("SSH results will appear here.")
+	for index, feature := range m.features {
+		m.featureIndexes[feature.ID] = index + 1
+	}
 	for _, item := range profile.Features {
 		m.selected[item.ID] = true
 		m.profileParameters[item.ID] = item.Parameters
@@ -364,7 +372,8 @@ func newSSHInputs() []textinput.Model {
 		{"User     ", "root", 128},
 		{"Password ", "password", 256},
 		{"Command  ", "uname -a", 2048},
-		{"Script   ", "./scripts/deploy.sh", 1024},
+		{"Script   ", "./scripts/remote/create_bond_vlan.sh", 1024},
+		{"Args     ", "bond2.306 ip=10.0.36.87 prefix=24 gateway=10.0.36.254", 2048},
 	}
 	inputs := make([]textinput.Model, len(definitions))
 	for index, definition := range definitions {
@@ -380,6 +389,7 @@ func newSSHInputs() []textinput.Model {
 		}
 		inputs[index] = input
 	}
+	inputs[sshScriptPath].SetValue("features/create-bond-vlan/run.sh")
 	return inputs
 }
 
@@ -423,7 +433,7 @@ func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) sshFieldOrder() []int {
 	if m.sshMode == sshScript {
-		return []int{sshHosts, sshUser, sshPassword, sshScriptPath}
+		return []int{sshHosts, sshUser, sshPassword, sshScriptPath, sshScriptArgs}
 	}
 	return []int{sshHosts, sshUser, sshPassword, sshCommandValue}
 }
@@ -490,6 +500,7 @@ func (m *model) startRemoteRun() tea.Cmd {
 	}
 	if m.sshMode == sshScript {
 		request.Script, err = remote.LoadScript(m.sshInputs[sshScriptPath].Value())
+		request.ScriptArgs = strings.Fields(m.sshInputs[sshScriptArgs].Value())
 	} else {
 		request.Command = strings.TrimSpace(m.sshInputs[sshCommandValue].Value())
 		if request.Command == "" {
@@ -527,10 +538,22 @@ func runRemoteCmd(ctx context.Context, request remote.Request) tea.Cmd {
 
 func (m *model) toggleCurrent() {
 	row := m.table.SelectedRow()
-	if len(row) < 3 {
+	if len(row) < 4 {
 		return
 	}
-	id := row[2]
+	id := row[3]
+	for _, feature := range m.features {
+		if feature.ID == id && feature.RemoteOnly {
+			m.sshMode = sshScript
+			m.sshInputs[sshScriptPath].SetValue(filepath.Join(feature.Directory, feature.Entrypoint))
+			m.sshInputs[sshScriptArgs].SetValue("")
+			m.sshInputs[sshScriptArgs].Placeholder = feature.RemoteArgsExample
+			m.activeTab = tabSSH
+			m.notice = fmt.Sprintf("Remote feature %s loaded; enter arguments and press F5", feature.ID)
+			m.focusSSH(sshScriptArgs)
+			return
+		}
+	}
 	m.selected[id] = !m.selected[id]
 	m.afterSelectionChange()
 }
@@ -621,7 +644,11 @@ func (m *model) refreshRows() {
 		if feature.RequireRoot {
 			root = "root"
 		}
-		rows = append(rows, table.Row{selected, m.statusLabel(feature.ID), feature.ID, feature.Version, root})
+		if feature.RemoteOnly {
+			root = "remote"
+		}
+		index := fmt.Sprintf("%d", m.featureIndexes[feature.ID])
+		rows = append(rows, table.Row{selected, index, m.statusLabel(feature.ID), feature.ID, feature.Version, root})
 	}
 	m.table.SetRows(rows)
 }
@@ -678,8 +705,9 @@ func (m *model) resize(width, height int) {
 	m.table.SetHeight(max(contentHeight-2, 3))
 	m.table.SetColumns([]table.Column{
 		{Title: "", Width: 3},
+		{Title: "#", Width: 4},
 		{Title: "STATUS", Width: 9},
-		{Title: "FEATURE", Width: max(leftWidth-38, 14)},
+		{Title: "FEATURE", Width: max(leftWidth-43, 14)},
 		{Title: "VERSION", Width: 9},
 		{Title: "AS", Width: 6},
 	})
@@ -691,7 +719,7 @@ func (m *model) resize(width, height int) {
 	if m.width < 100 {
 		inputWidth = max(m.width-16, 20)
 		m.sshOutput.Width = max(m.width-6, 20)
-		m.sshOutput.Height = max(contentHeight-16, 1)
+		m.sshOutput.Height = max(contentHeight-17, 1)
 	}
 	for index := range m.sshInputs {
 		m.sshInputs[index].Width = inputWidth

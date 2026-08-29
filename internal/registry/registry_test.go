@@ -3,6 +3,7 @@ package registry
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/quyenhl16/script/internal/domain"
@@ -59,6 +60,42 @@ func TestResolveRejectsDependencyCycle(t *testing.T) {
 	_, err = registry.Resolve(domain.Profile{Name: "test", Features: []domain.FeatureSelection{{ID: "a"}}})
 	if err == nil {
 		t.Fatal("expected dependency cycle error")
+	}
+}
+
+func TestListSortsFeaturesAlphabeticallyByID(t *testing.T) {
+	root := t.TempDir()
+	for _, id := range []string{"zulu", "Bravo", "alpha"} {
+		writeFeature(t, root, id, `{
+  "apiVersion":"syssetup/v1", "id":"`+id+`", "name":"`+id+`",
+  "version":"1", "entrypoint":"run.sh", "timeoutSeconds":30
+}`)
+	}
+	registry, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	features := registry.List()
+	for index, want := range []string{"alpha", "Bravo", "zulu"} {
+		if features[index].ID != want {
+			t.Fatalf("feature %d = %q, want %q", index, features[index].ID, want)
+		}
+	}
+}
+
+func TestResolveRejectsRemoteOnlyFeature(t *testing.T) {
+	root := t.TempDir()
+	writeFeature(t, root, "remote-task", `{
+  "apiVersion":"syssetup/v1", "id":"remote-task", "name":"Remote task",
+  "version":"1", "entrypoint":"run.sh", "timeoutSeconds":30, "remoteOnly":true
+}`)
+	registry, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = registry.Resolve(domain.Profile{Name: "test", Features: []domain.FeatureSelection{{ID: "remote-task"}}})
+	if err == nil || !strings.Contains(err.Error(), "remote-only") {
+		t.Fatalf("expected remote-only error, got %v", err)
 	}
 }
 

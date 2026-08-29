@@ -66,11 +66,11 @@ func (m *model) tabsView() string {
 func (m *model) sshView(height int) string {
 	mode := "COMMAND"
 	modeHint := "Run one Linux command on every server"
-	activeInput := sshCommandValue
+	activeInputs := []int{sshCommandValue}
 	if m.sshMode == sshScript {
 		mode = "SCRIPT"
-		modeHint = "Upload a local script through stdin and run it with sh"
-		activeInput = sshScriptPath
+		modeHint = "Upload a local script through stdin and run it with bash"
+		activeInputs = []int{sshScriptPath, sshScriptArgs}
 	}
 	formLines := []string{
 		panelTitleStyle.Render("Remote SSH") + "  " + contextStyle.Render(mode),
@@ -79,14 +79,22 @@ func (m *model) sshView(height int) string {
 		m.sshInputs[sshHosts].View(),
 		m.sshInputs[sshUser].View(),
 		m.sshInputs[sshPassword].View(),
-		m.sshInputs[activeInput].View(),
+	}
+	for _, input := range activeInputs {
+		formLines = append(formLines, m.sshInputs[input].View())
+	}
+	formLines = append(formLines,
 		"",
 		mutedStyle.Render("Servers: comma/space separated host[:port]; default port is 22."),
 		mutedStyle.Render("Password stays in memory and is never written to logs."),
 		mutedStyle.Render("Host keys use trust-on-first-use and changed keys are rejected."),
-	}
+	)
 	if m.width < 100 {
-		formLines = append(formLines[:7], "", mutedStyle.Render("Comma-separated host[:port]; F2 mode, F5 run."))
+		visibleFields := 7
+		if m.sshMode == sshScript {
+			visibleFields = 8
+		}
+		formLines = append(formLines[:visibleFields], "", mutedStyle.Render("Comma-separated host[:port]; F2 mode, F5 run."))
 	}
 	formWidth := m.width - 2
 	if m.width >= 100 {
@@ -94,7 +102,7 @@ func (m *model) sshView(height int) string {
 	}
 	formHeight := max(height-2, 2)
 	if m.width < 100 {
-		formHeight = 9
+		formHeight = 10
 	}
 	form := panelStyle.Width(max(formWidth-2, 20)).Height(formHeight).Render(strings.Join(formLines, "\n"))
 	if m.width < 100 {
@@ -149,6 +157,7 @@ func (m *model) detailView(width int) string {
 		keyStyle.Render("Version") + "     " + valueStyle.Render(feature.Version),
 		keyStyle.Render("Entrypoint") + "  " + valueStyle.Render(feature.Entrypoint),
 		keyStyle.Render("Privilege") + "   " + valueStyle.Render(privilege(feature.RequireRoot)),
+		keyStyle.Render("Execution") + "   " + valueStyle.Render(executionMode(feature.RemoteOnly)),
 		keyStyle.Render("Timeout") + "     " + valueStyle.Render(fmt.Sprintf("%ds", feature.TimeoutSeconds)),
 		"",
 		keyStyle.Render("Depends on"),
@@ -247,11 +256,11 @@ func (m *model) helpView() string {
 
 func (m *model) currentFeature() (domain.Feature, bool) {
 	row := m.table.SelectedRow()
-	if len(row) < 3 {
+	if len(row) < 4 {
 		return domain.Feature{}, false
 	}
 	for _, feature := range m.features {
-		if feature.ID == row[2] {
+		if feature.ID == row[3] {
 			return feature, true
 		}
 	}
@@ -263,4 +272,11 @@ func privilege(root bool) string {
 		return "root"
 	}
 	return "user"
+}
+
+func executionMode(remoteOnly bool) string {
+	if remoteOnly {
+		return "Remote SSH"
+	}
+	return "Local runner"
 }

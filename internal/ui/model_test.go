@@ -26,6 +26,9 @@ func TestFilterAndSelectionBuildExecutionPlan(t *testing.T) {
 	if got := len(m.table.Rows()); got != 1 {
 		t.Fatalf("filtered rows = %d, want 1", got)
 	}
+	if got := m.table.Rows()[0][1]; got != "2" {
+		t.Fatalf("filtered feature index = %q, want stable alphabetical index 2", got)
+	}
 	m.toggleCurrent()
 	if len(m.resolved) != 2 || m.resolved[0].Feature.ID != "base" || m.resolved[1].Feature.ID != "web" {
 		t.Fatalf("unexpected plan: %#v", m.resolved)
@@ -96,7 +99,7 @@ func TestSSHFormMasksPasswordAndSwitchesMode(t *testing.T) {
 	}
 
 	m.toggleSSHMode()
-	if view := m.View(); !strings.Contains(view, "SCRIPT") || !strings.Contains(view, "./scripts/deploy.sh") {
+	if view := m.View(); !strings.Contains(view, "SCRIPT") || !strings.Contains(view, "create-bond-vlan/run.sh") || !strings.Contains(view, "bond2.306") {
 		t.Fatalf("script mode was not rendered: %s", view)
 	}
 }
@@ -113,6 +116,27 @@ func TestSSHFormValidationDoesNotStartRun(t *testing.T) {
 	m.startRemoteRun()
 	if m.remoteRunning || m.remoteErr == nil {
 		t.Fatalf("expected validation error, running=%v error=%v", m.remoteRunning, m.remoteErr)
+	}
+}
+
+func TestRemoteFeatureOpensSSHScriptForm(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "create-bond-vlan", `,"remoteOnly":true,"requireRoot":true`)
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(context.Background(), reg, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	m.toggleCurrent()
+	if m.activeTab != tabSSH || m.sshMode != sshScript || m.sshFocus != sshScriptArgs {
+		t.Fatalf("remote feature did not open SSH script form: tab=%d mode=%d focus=%d", m.activeTab, m.sshMode, m.sshFocus)
+	}
+	wantPath := filepath.Join(root, "create-bond-vlan", "run.sh")
+	if got := m.sshInputs[sshScriptPath].Value(); got != wantPath {
+		t.Fatalf("script path = %q, want %q", got, wantPath)
+	}
+	if m.selected["create-bond-vlan"] {
+		t.Fatal("remote-only feature was added to the local execution plan")
 	}
 }
 

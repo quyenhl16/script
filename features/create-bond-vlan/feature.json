@@ -1,0 +1,13 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "create-bond-vlan",
+  "name": "Create Bond VLAN",
+  "version": "1.0.0",
+  "description": "Create and activate a VLAN interface on a bond across remote servers",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux"],
+  "requireRoot": true,
+  "remoteOnly": true,
+  "remoteArgsExample": "bond2.306 ip=10.0.36.87 prefix=24 gateway=10.0.36.254",
+  "timeoutSeconds": 30
+}

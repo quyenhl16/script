@@ -1,0 +1,13 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "create-local-path",
+  "name": "Create Local Paths",
+  "version": "1.0.0",
+  "description": "Create a configured list of local directories across remote servers",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": true,
+  "remoteOnly": true,
+  "remoteArgsExample": "/data/app /data/log /opt/company/cache mode=0755 owner=root group=root",
+  "timeoutSeconds": 30
+}

@@ -85,7 +85,14 @@ func (r *Registry) List() []domain.Feature {
 	for _, feature := range r.features {
 		features = append(features, feature)
 	}
-	sort.Slice(features, func(i, j int) bool { return features[i].ID < features[j].ID })
+	sort.Slice(features, func(i, j int) bool {
+		left := strings.ToLower(features[i].ID)
+		right := strings.ToLower(features[j].ID)
+		if left == right {
+			return features[i].ID < features[j].ID
+		}
+		return left < right
+	})
 	return features
 }
 
@@ -105,6 +112,9 @@ func (r *Registry) Resolve(profile domain.Profile) ([]domain.ResolvedFeature, er
 		feature, exists := r.features[id]
 		if !exists {
 			return fmt.Errorf("unknown feature %q", id)
+		}
+		if feature.RemoteOnly {
+			return fmt.Errorf("feature %q is remote-only; open it from the Remote SSH dashboard", id)
 		}
 		if state[id] == 1 {
 			return fmt.Errorf("dependency cycle contains feature %q", id)

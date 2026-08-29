@@ -72,10 +72,11 @@ func TestExecuteRunsScriptOverSSH(t *testing.T) {
 	address, received, stop := startTestSSHServer(t, "secret")
 	defer stop()
 	request := Request{
-		Servers:  []Server{{Address: address, User: "tester", Password: "secret"}},
-		Script:   []byte("echo integration-test\n"),
-		Timeout:  3 * time.Second,
-		HostKeys: ssh.InsecureIgnoreHostKey(), // isolated ephemeral test server
+		Servers:    []Server{{Address: address, User: "tester", Password: "secret"}},
+		Script:     []byte("echo integration-test\n"),
+		ScriptArgs: []string{"bond2.306", "ip=10.0.36.87", "description=operator's vlan"},
+		Timeout:    3 * time.Second,
+		HostKeys:   ssh.InsecureIgnoreHostKey(), // isolated ephemeral test server
 	}
 	results := Execute(context.Background(), request)
 	if len(results) != 1 || results[0].Err != nil {
@@ -85,7 +86,8 @@ func TestExecuteRunsScriptOverSSH(t *testing.T) {
 		t.Fatalf("output = %q", results[0].Output)
 	}
 	got := <-received
-	if got.command != "sh -s --" || got.stdin != "echo integration-test\n" {
+	wantCommand := `bash -s -- 'bond2.306' 'ip=10.0.36.87' 'description=operator'"'"'s vlan'`
+	if got.command != wantCommand || got.stdin != "echo integration-test\n" {
 		t.Fatalf("remote request = %#v", got)
 	}
 }
