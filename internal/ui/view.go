@@ -25,6 +25,8 @@ func (m *model) View() string {
 		content = m.planView(contentHeight)
 	case tabLogs:
 		content = m.logsView(contentHeight)
+	case tabSSH:
+		content = m.sshView(contentHeight)
 	default:
 		content = m.featuresView(contentHeight)
 	}
@@ -45,7 +47,7 @@ func (m *model) headerView() string {
 }
 
 func (m *model) tabsView() string {
-	tabs := []string{"1 Features", "2 Plan", "3 Logs"}
+	tabs := []string{"1 Features", "2 Plan", "3 Logs", "4 Remote SSH"}
 	parts := make([]string, len(tabs))
 	for index, label := range tabs {
 		if tabID(index) == m.activeTab {
@@ -59,6 +61,57 @@ func (m *model) tabsView() string {
 		filter = "  " + m.filter.View()
 	}
 	return strings.Join(parts, "") + filter
+}
+
+func (m *model) sshView(height int) string {
+	mode := "COMMAND"
+	modeHint := "Run one Linux command on every server"
+	activeInput := sshCommandValue
+	if m.sshMode == sshScript {
+		mode = "SCRIPT"
+		modeHint = "Upload a local script through stdin and run it with sh"
+		activeInput = sshScriptPath
+	}
+	formLines := []string{
+		panelTitleStyle.Render("Remote SSH") + "  " + contextStyle.Render(mode),
+		mutedStyle.Render(modeHint),
+		"",
+		m.sshInputs[sshHosts].View(),
+		m.sshInputs[sshUser].View(),
+		m.sshInputs[sshPassword].View(),
+		m.sshInputs[activeInput].View(),
+		"",
+		mutedStyle.Render("Servers: comma/space separated host[:port]; default port is 22."),
+		mutedStyle.Render("Password stays in memory and is never written to logs."),
+		mutedStyle.Render("Host keys use trust-on-first-use and changed keys are rejected."),
+	}
+	if m.width < 100 {
+		formLines = append(formLines[:7], "", mutedStyle.Render("Comma-separated host[:port]; F2 mode, F5 run."))
+	}
+	formWidth := m.width - 2
+	if m.width >= 100 {
+		formWidth = m.width / 2
+	}
+	formHeight := max(height-2, 2)
+	if m.width < 100 {
+		formHeight = 9
+	}
+	form := panelStyle.Width(max(formWidth-2, 20)).Height(formHeight).Render(strings.Join(formLines, "\n"))
+	if m.width < 100 {
+		title := panelTitleStyle.Render("Per-server results")
+		if m.remoteRunning {
+			title += "  " + m.spinner.View() + noticeStyle.Render("running")
+		}
+		result := panelStyle.Width(max(formWidth-2, 20)).Height(max(height-formHeight-5, 2)).Render(title + "\n" + m.sshOutput.View())
+		return lipgloss.JoinVertical(lipgloss.Left, form, result)
+	}
+	resultWidth := m.width - formWidth - 1
+	title := panelTitleStyle.Render("Per-server results")
+	if m.remoteRunning {
+		title += "  " + m.spinner.View() + noticeStyle.Render("running")
+	}
+	result := panelStyle.Width(max(resultWidth-2, 20)).Height(max(height-2, 2)).Render(title + "\n\n" + m.sshOutput.View())
+	return lipgloss.JoinHorizontal(lipgloss.Top, form, " ", result)
 }
 
 func (m *model) featuresView(height int) string {
@@ -135,16 +188,27 @@ func (m *model) logsView(height int) string {
 
 func (m *model) statusView() string {
 	message := m.notice
-	if m.runErr != nil {
+	if m.runErr != nil || m.remoteErr != nil {
 		return errorStyle.MaxWidth(m.width).Render("! " + message)
 	}
-	if m.running {
+	if m.running || m.remoteRunning {
 		return noticeStyle.MaxWidth(m.width).Render(m.spinner.View() + " " + message)
 	}
 	return mutedStyle.MaxWidth(m.width).Render("• " + message)
 }
 
 func (m *model) footerView() string {
+	if m.activeTab == tabSSH {
+		if m.remoteRunning {
+			return keyStyle.Render("ctrl+c") + " cancel  " + keyStyle.Render("esc") + " navigation"
+		}
+		return strings.Join([]string{
+			keyStyle.Render("tab/↑↓") + " field",
+			keyStyle.Render("F2") + " command/script",
+			keyStyle.Render("F5") + " run",
+			keyStyle.Render("esc") + " navigation",
+		}, "  ")
+	}
 	items := []string{
 		keyStyle.Render("j/k") + " move",
 		keyStyle.Render("space") + " select",
@@ -169,9 +233,11 @@ func (m *model) helpView() string {
 		keyStyle.Render("a / n") + "           Select all visible / select none",
 		keyStyle.Render("/") + "               Filter features",
 		keyStyle.Render("1 / 2 / 3") + "       Features / Plan / Logs",
+		keyStyle.Render("4") + "               Remote SSH form",
 		keyStyle.Render("tab / shift+tab") + " Switch dashboard view",
 		keyStyle.Render("r") + "               Execute the current plan",
 		keyStyle.Render("c") + "               Cancel the running plan",
+		keyStyle.Render("F2 / F5") + "         SSH mode / run SSH",
 		keyStyle.Render("? / esc") + "         Close this help",
 		keyStyle.Render("q / ctrl+c") + "      Quit",
 	}, "\n")

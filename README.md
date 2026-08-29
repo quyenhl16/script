@@ -57,6 +57,8 @@ TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
 - `Features`: bảng feature, trạng thái, version, quyền thực thi và panel chi tiết.
 - `Plan`: thứ tự thực thi sau khi resolve dependency.
 - `Logs`: output cập nhật trong lúc runner hoạt động.
+- `Remote SSH`: nhập danh sách server, user, password để chạy Linux command
+  hoặc gửi một script cục bộ lên nhiều server qua SSH.
 - Layout tự thích nghi; panel chi tiết được ẩn trên terminal hẹp.
 
 Phím tắt:
@@ -67,11 +69,20 @@ Phím tắt:
 | `Space`, `Enter` | Chọn hoặc bỏ chọn feature |
 | `/` | Lọc feature |
 | `a`, `n` | Chọn tất cả feature đang hiển thị hoặc bỏ chọn tất cả |
-| `1/2/3`, `Tab` | Chuyển Features, Plan và Logs |
+| `1/2/3/4`, `Tab` | Chuyển Features, Plan, Logs và Remote SSH |
 | `r` | Chạy execution plan |
 | `c` | Hủy plan đang chạy |
+| `F2` | Đổi giữa chạy command và script trong Remote SSH |
+| `F5` | Chạy SSH trên tất cả server đã nhập |
 | `?` | Hiện trợ giúp |
 | `q` | Thoát |
+
+Trong tab `Remote SSH`, danh sách server dùng dấu phẩy hoặc khoảng trắng,
+ví dụ `10.0.0.10, 10.0.0.11:2222`. Nếu không ghi port thì mặc định là `22`.
+Các server chạy song song với timeout 30 giây/server và kết quả được hiển thị
+riêng. Password chỉ được giữ trong bộ nhớ; host key được lưu theo cơ chế
+trust-on-first-use tại thư mục cấu hình người dùng và bị từ chối nếu thay đổi ở
+lần kết nối sau.
 
 Khi build từ source cần Go 1.24 trở lên. Binary đã build vẫn có thể chạy độc lập trên server đích.
 

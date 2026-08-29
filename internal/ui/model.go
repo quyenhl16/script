@@ -17,6 +17,7 @@ import (
 
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
+	"github.com/quyenhl16/script/internal/remote"
 	"github.com/quyenhl16/script/internal/runner"
 )
 
@@ -26,6 +27,22 @@ const (
 	tabFeatures tabID = iota
 	tabPlan
 	tabLogs
+	tabSSH
+)
+
+type sshMode int
+
+const (
+	sshCommand sshMode = iota
+	sshScript
+)
+
+const (
+	sshHosts = iota
+	sshUser
+	sshPassword
+	sshCommandValue
+	sshScriptPath
 )
 
 type runFinishedMsg struct {
@@ -35,6 +52,10 @@ type runFinishedMsg struct {
 }
 
 type logTickMsg struct{}
+
+type remoteFinishedMsg struct {
+	results []remote.Result
+}
 
 type model struct {
 	ctx               context.Context
@@ -50,18 +71,25 @@ type model struct {
 	table     table.Model
 	filter    textinput.Model
 	logs      viewport.Model
+	sshOutput viewport.Model
 	spinner   spinner.Model
 	activeTab tabID
+	sshInputs []textinput.Model
+	sshFocus  int
+	sshMode   sshMode
 
-	width   int
-	height  int
-	help    bool
-	running bool
-	notice  string
-	runErr  error
+	width         int
+	height        int
+	help          bool
+	running       bool
+	remoteRunning bool
+	notice        string
+	runErr        error
+	remoteErr     error
 
 	activeOutput *safeBuffer
 	cancelRun    context.CancelFunc
+	cancelRemote context.CancelFunc
 }
 
 func newModel(ctx context.Context, registry *registry.Registry, profile domain.Profile, options runner.Options) *model {
@@ -103,11 +131,15 @@ func newModel(ctx context.Context, registry *registry.Registry, profile domain.P
 				{Title: "AS", Width: 6},
 			}),
 		),
-		filter:  filter,
-		logs:    viewport.New(0, 0),
-		spinner: spin,
-		notice:  "Ready",
+		filter:    filter,
+		logs:      viewport.New(0, 0),
+		sshOutput: viewport.New(0, 0),
+		spinner:   spin,
+		notice:    "Ready",
+		sshFocus:  -1,
 	}
+	m.sshInputs = newSSHInputs()
+	m.sshOutput.SetContent("SSH results will appear here.")
 	for _, item := range profile.Features {
 		m.selected[item.ID] = true
 		m.profileParameters[item.ID] = item.Parameters
@@ -141,6 +173,36 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.activeOutput = nil
 		m.refreshRows()
 		return m, nil
+	case remoteFinishedMsg:
+		m.remoteRunning = false
+		m.cancelRemote = nil
+		m.remoteErr = nil
+		succeeded := 0
+		var output strings.Builder
+		for _, result := range msg.results {
+			status := "PASS"
+			if result.Err != nil {
+				status = "FAIL"
+				m.remoteErr = errors.Join(m.remoteErr, fmt.Errorf("%s: %w", result.Address, result.Err))
+			} else {
+				succeeded++
+			}
+			fmt.Fprintf(&output, "[%s] %s (%s)\n", status, result.Address, result.Duration.Round(time.Millisecond))
+			if result.Output != "" {
+				output.WriteString(result.Output)
+				if !strings.HasSuffix(result.Output, "\n") {
+					output.WriteByte('\n')
+				}
+			}
+			if result.Err != nil {
+				fmt.Fprintf(&output, "error: %v\n", result.Err)
+			}
+			output.WriteByte('\n')
+		}
+		m.sshOutput.SetContent(strings.TrimRight(output.String(), "\n"))
+		m.sshOutput.GotoBottom()
+		m.notice = fmt.Sprintf("SSH completed: %d/%d server(s) succeeded", succeeded, len(msg.results))
+		return m, nil
 	case logTickMsg:
 		if m.activeOutput != nil {
 			m.logs.SetContent(m.activeOutput.String())
@@ -151,7 +213,7 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case spinner.TickMsg:
-		if m.running {
+		if m.running || m.remoteRunning {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			return m, cmd
@@ -195,6 +257,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.refreshRows()
 		return m, cmd
 	}
+	if m.activeTab == tabSSH && m.sshFocus >= 0 {
+		return m.handleSSHInput(msg)
+	}
 
 	switch key {
 	case "q", "ctrl+c":
@@ -203,10 +268,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.help = true
 		return m, nil
 	case "tab":
-		m.activeTab = (m.activeTab + 1) % 3
+		m.activeTab = (m.activeTab + 1) % 4
 		return m, nil
 	case "shift+tab":
-		m.activeTab = (m.activeTab + 2) % 3
+		m.activeTab = (m.activeTab + 3) % 4
 		return m, nil
 	case "1":
 		m.activeTab = tabFeatures
@@ -217,6 +282,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "3":
 		m.activeTab = tabLogs
 		return m, nil
+	case "4":
+		m.activeTab = tabSSH
+		return m, m.focusSSH(sshHosts)
 	case "/":
 		if m.activeTab == tabFeatures && !m.running {
 			return m, m.filter.Focus()
@@ -241,13 +309,26 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "r":
-		if !m.running {
+		if m.activeTab == tabSSH && !m.remoteRunning {
+			return m, m.startRemoteRun()
+		}
+		if !m.running && !m.remoteRunning {
 			return m, m.startRun()
 		}
 	case "c":
 		if m.running && m.cancelRun != nil {
 			m.cancelRun()
 			m.notice = "Cancelling current run..."
+		}
+		return m, nil
+	case "f2":
+		if m.activeTab == tabSSH && !m.remoteRunning {
+			m.toggleSSHMode()
+		}
+		return m, nil
+	case "f5":
+		if m.activeTab == tabSSH && !m.remoteRunning {
+			return m, m.startRemoteRun()
 		}
 		return m, nil
 	}
@@ -257,6 +338,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.table, cmd = m.table.Update(msg)
 	} else if m.activeTab == tabLogs {
 		m.logs, cmd = m.logs.Update(msg)
+	} else if m.activeTab == tabSSH {
+		m.sshOutput, cmd = m.sshOutput.Update(msg)
 	}
 	return m, cmd
 }
@@ -265,7 +348,181 @@ func (m *model) quit() (tea.Model, tea.Cmd) {
 	if m.cancelRun != nil {
 		m.cancelRun()
 	}
+	if m.cancelRemote != nil {
+		m.cancelRemote()
+	}
 	return m, tea.Quit
+}
+
+func newSSHInputs() []textinput.Model {
+	definitions := []struct {
+		prompt      string
+		placeholder string
+		limit       int
+	}{
+		{"Servers  ", "10.0.0.10, server.example:2222", 512},
+		{"User     ", "root", 128},
+		{"Password ", "password", 256},
+		{"Command  ", "uname -a", 2048},
+		{"Script   ", "./scripts/deploy.sh", 1024},
+	}
+	inputs := make([]textinput.Model, len(definitions))
+	for index, definition := range definitions {
+		input := textinput.New()
+		input.Prompt = definition.prompt
+		input.Placeholder = definition.placeholder
+		input.CharLimit = definition.limit
+		input.PromptStyle = keyStyle
+		input.TextStyle = valueStyle
+		if index == sshPassword {
+			input.EchoMode = textinput.EchoPassword
+			input.EchoCharacter = '•'
+		}
+		inputs[index] = input
+	}
+	return inputs
+}
+
+func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.sshInputs[m.sshFocus].Blur()
+		m.sshFocus = -1
+		return m, nil
+	case "tab", "down", "enter":
+		m.moveSSHFocus(1)
+		return m, nil
+	case "shift+tab", "up":
+		m.moveSSHFocus(-1)
+		return m, nil
+	case "f2":
+		if !m.remoteRunning {
+			m.toggleSSHMode()
+		}
+		return m, nil
+	case "f5":
+		if !m.remoteRunning {
+			return m, m.startRemoteRun()
+		}
+		return m, nil
+	case "ctrl+c":
+		if m.remoteRunning && m.cancelRemote != nil {
+			m.cancelRemote()
+			m.notice = "Cancelling SSH execution..."
+			return m, nil
+		}
+		return m.quit()
+	}
+	if m.remoteRunning {
+		return m, nil
+	}
+	var cmd tea.Cmd
+	m.sshInputs[m.sshFocus], cmd = m.sshInputs[m.sshFocus].Update(msg)
+	return m, cmd
+}
+
+func (m *model) sshFieldOrder() []int {
+	if m.sshMode == sshScript {
+		return []int{sshHosts, sshUser, sshPassword, sshScriptPath}
+	}
+	return []int{sshHosts, sshUser, sshPassword, sshCommandValue}
+}
+
+func (m *model) focusSSH(field int) tea.Cmd {
+	for index := range m.sshInputs {
+		m.sshInputs[index].Blur()
+	}
+	m.sshFocus = field
+	return m.sshInputs[field].Focus()
+}
+
+func (m *model) moveSSHFocus(delta int) {
+	order := m.sshFieldOrder()
+	position := 0
+	for index, field := range order {
+		if field == m.sshFocus {
+			position = index
+			break
+		}
+	}
+	position = (position + delta + len(order)) % len(order)
+	m.focusSSH(order[position])
+}
+
+func (m *model) toggleSSHMode() {
+	if m.sshMode == sshCommand {
+		m.sshMode = sshScript
+	} else {
+		m.sshMode = sshCommand
+	}
+	order := m.sshFieldOrder()
+	valid := false
+	for _, field := range order {
+		valid = valid || field == m.sshFocus
+	}
+	if m.sshFocus >= 0 && !valid {
+		m.focusSSH(order[len(order)-1])
+	}
+}
+
+func (m *model) startRemoteRun() tea.Cmd {
+	if m.running {
+		m.remoteErr = errors.New("a feature plan is already running")
+		m.notice = "Wait for the feature plan to finish before starting SSH"
+		return nil
+	}
+	addresses, err := remote.ParseAddresses(m.sshInputs[sshHosts].Value())
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "SSH: " + err.Error()
+		return nil
+	}
+	user := strings.TrimSpace(m.sshInputs[sshUser].Value())
+	password := m.sshInputs[sshPassword].Value()
+	if user == "" || password == "" {
+		m.remoteErr = errors.New("user and password are required")
+		m.notice = "SSH: user and password are required"
+		return nil
+	}
+	request := remote.Request{Timeout: remote.DefaultTimeout}
+	for _, address := range addresses {
+		request.Servers = append(request.Servers, remote.Server{Address: address, User: user, Password: password})
+	}
+	if m.sshMode == sshScript {
+		request.Script, err = remote.LoadScript(m.sshInputs[sshScriptPath].Value())
+	} else {
+		request.Command = strings.TrimSpace(m.sshInputs[sshCommandValue].Value())
+		if request.Command == "" {
+			err = errors.New("enter a command")
+		}
+	}
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "SSH: " + err.Error()
+		return nil
+	}
+	knownHostsPath, err := remote.DefaultKnownHostsPath()
+	if err == nil {
+		request.HostKeys, err = remote.NewTOFUHostKeyCallback(knownHostsPath)
+	}
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "SSH host keys: " + err.Error()
+		return nil
+	}
+	m.remoteErr = nil
+	m.remoteRunning = true
+	m.notice = fmt.Sprintf("Running SSH on %d server(s)...", len(request.Servers))
+	m.sshOutput.SetContent("Connecting...")
+	runContext, cancel := context.WithCancel(m.ctx)
+	m.cancelRemote = cancel
+	return tea.Batch(m.spinner.Tick, runRemoteCmd(runContext, request))
+}
+
+func runRemoteCmd(ctx context.Context, request remote.Request) tea.Cmd {
+	return func() tea.Msg {
+		return remoteFinishedMsg{results: remote.Execute(ctx, request)}
+	}
 }
 
 func (m *model) toggleCurrent() {
@@ -428,4 +685,15 @@ func (m *model) resize(width, height int) {
 	})
 	m.logs.Width = max(m.width-4, 20)
 	m.logs.Height = max(contentHeight-2, 3)
+	m.sshOutput.Width = max(m.width/2-6, 20)
+	m.sshOutput.Height = max(contentHeight-5, 3)
+	inputWidth := max(m.width/2-16, 20)
+	if m.width < 100 {
+		inputWidth = max(m.width-16, 20)
+		m.sshOutput.Width = max(m.width-6, 20)
+		m.sshOutput.Height = max(contentHeight-16, 1)
+	}
+	for index := range m.sshInputs {
+		m.sshInputs[index].Width = inputWidth
+	}
 }

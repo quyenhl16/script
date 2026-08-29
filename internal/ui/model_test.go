@@ -65,6 +65,57 @@ func TestDashboardViewAndDryRun(t *testing.T) {
 	}
 }
 
+func TestSSHFormMasksPasswordAndSwitchesMode(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(context.Background(), reg, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	m.resize(120, 30)
+	m.activeTab = tabSSH
+	m.sshInputs[sshHosts].SetValue("10.0.0.1,10.0.0.2:2222")
+	m.sshInputs[sshUser].SetValue("admin")
+	m.sshInputs[sshPassword].SetValue("top-secret")
+	m.sshInputs[sshCommandValue].SetValue("uname -a")
+
+	view := m.View()
+	for _, expected := range []string{"Remote SSH", "COMMAND", "10.0.0.1", "uname -a"} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("SSH form does not contain %q", expected)
+		}
+	}
+	if strings.Contains(view, "top-secret") {
+		t.Fatal("SSH form leaked password")
+	}
+	m.resize(80, 30)
+	m.sshOutput.SetContent("narrow-layout-result")
+	if view := m.View(); !strings.Contains(view, "narrow-layout-result") {
+		t.Fatal("narrow SSH layout hid per-server results")
+	}
+
+	m.toggleSSHMode()
+	if view := m.View(); !strings.Contains(view, "SCRIPT") || !strings.Contains(view, "./scripts/deploy.sh") {
+		t.Fatalf("script mode was not rendered: %s", view)
+	}
+}
+
+func TestSSHFormValidationDoesNotStartRun(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(context.Background(), reg, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	m.activeTab = tabSSH
+	m.startRemoteRun()
+	if m.remoteRunning || m.remoteErr == nil {
+		t.Fatalf("expected validation error, running=%v error=%v", m.remoteRunning, m.remoteErr)
+	}
+}
+
 func writeDashboardFeature(t *testing.T, root, id, extra string) {
 	t.Helper()
 	directory := filepath.Join(root, id)
