@@ -62,6 +62,8 @@ TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
   hoặc gửi một script cục bộ lên nhiều server qua SSH.
 - `Workflows`: danh sách quy trình nhiều step; mỗi server chạy tuần tự theo
   dependency trong khi các server vẫn được xử lý song song.
+- `Profiles`: khám phá toàn bộ `profiles/*.json`; chọn profile bằng `Enter` để
+  thay selection và parameters ngay trong TUI mà không cần khởi động lại.
 - Layout tự thích nghi; panel chi tiết được ẩn trên terminal hẹp.
 
 Phím tắt:
@@ -72,13 +74,18 @@ Phím tắt:
 | `Space`, `Enter` | Chọn hoặc bỏ chọn feature |
 | `/` | Lọc feature |
 | `a`, `n` | Chọn tất cả feature đang hiển thị hoặc bỏ chọn tất cả |
-| `1/2/3/4/5`, `Tab` | Chuyển Features, Plan, Logs, Remote SSH và Workflows |
+| `1/2/3/4/5/6`, `Tab` | Chuyển Features, Plan, Logs, Remote SSH, Workflows và Profiles |
 | `r` | Chạy execution plan |
 | `c` | Hủy plan đang chạy |
 | `F2` | Đổi giữa command, script và workflow trong Remote SSH |
 | `F5` | Chạy SSH trên tất cả server đã nhập |
 | `?` | Hiện trợ giúp |
 | `q` | Thoát |
+
+Nhấn `6` để mở danh sách profile, dùng `j/k` hoặc phím mũi tên để chọn rồi
+nhấn `Enter`. TUI sẽ xóa selection/parameters của profile cũ, nạp profile mới và
+quay về tab `Features`. Profile khởi động vẫn có thể chọn bằng `--profile`; dùng
+`--profiles-dir` nếu các profile có thể chọn nằm ngoài thư mục `profiles/`.
 
 Trong tab `Remote SSH`, danh sách server dùng dấu phẩy hoặc khoảng trắng,
 ví dụ `10.0.0.10, 10.0.0.11:2222`. Nếu không ghi port thì mặc định là `22`.
@@ -194,7 +201,7 @@ cần kiểm tra. `rules_file` mặc định trỏ tới
 {
   "id": "verify-xml-config",
   "parameters": {
-    "xml_file": "/opt/company/conf/system.xml",
+    "xml_file": "/opt/company/conf/config_amf.xml",
     "rules_file": "checks/xml/system-critical-paths.json"
   }
 }
@@ -207,7 +214,7 @@ Sau đó chạy:
 ./bin/syssetup run --profile profiles/verify-xml-config.json
 ```
 
-Mỗi rule khai báo XPath và giá trị mong đợi:
+Rule so sánh scalar khai báo XPath và giá trị mong đợi:
 
 ```json
 {
@@ -225,11 +232,35 @@ Mỗi rule khai báo XPath và giá trị mong đợi:
 }
 ```
 
+Với container hoặc list chỉ cần xác nhận tồn tại và xem toàn bộ giá trị hiện
+tại, dùng `reportOnly: true` và không khai báo `expected`:
+
+```json
+{
+  "id": "amf-support-tai",
+  "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='sctp_handler_service']/*[local-name()='sctp_conf']/*[local-name()='support_tai']",
+  "reportOnly": true,
+  "required": true
+}
+```
+
+Nếu XPath trên chọn nhiều `support_tai`, output hiển thị số node và từng leaf:
+
+```text
+[PASS] amf-support-tai: matched=9
+  [1]
+    no='1'
+    plmn_id_mcc='452'
+    plmn_id_mnc='04'
+    tac='000001'
+```
+
 `compare` hỗ trợ `exact`, `trimmed`, `integer`, `boolean`, `ip` và `regex`.
-Mỗi XPath phải chọn đúng một node; node không tồn tại sẽ là lỗi nếu `required`
-là `true`, ngược lại được ghi `[SKIP]`. Đặt `sensitive: true` để không in value
-mong đợi và value thực tế ra log. Với XML có namespace, XPath có thể dùng
-`local-name()`, ví dụ `/*[local-name()='system']/*[local-name()='paths']`.
+Rule so sánh phải chọn đúng một node; rule `reportOnly` cho phép nhiều node.
+Node không tồn tại sẽ là lỗi nếu `required` là `true`, ngược lại được ghi
+`[SKIP]`. Đặt `sensitive: true` để không in value mong đợi và value thực tế ra
+log. Với XML có namespace, XPath có thể dùng `local-name()` như các rule AMF
+trong `checks/xml/system-critical-paths.json`.
 
 Máy chạy `syssetup` cần có `python3` và `xmllint` (gói `libxml2`). Cả hai đường
 dẫn có thể là tuyệt đối hoặc tương đối với thư mục hiện tại. Feature chỉ đọc và

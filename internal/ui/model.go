@@ -32,6 +32,7 @@ const (
 	tabLogs
 	tabSSH
 	tabWorkflows
+	tabProfiles
 )
 
 type sshMode int
@@ -82,9 +83,11 @@ type model struct {
 	statuses          map[string]domain.Status
 	resolved          []domain.ResolvedFeature
 	workflows         []workflow.Definition
+	profiles          []domain.Profile
 
 	table         table.Model
 	workflowTable table.Model
+	profileTable  table.Model
 	filter        textinput.Model
 	logs          viewport.Model
 	sshOutput     viewport.Model
@@ -109,10 +112,14 @@ type model struct {
 }
 
 func newModel(ctx context.Context, registry *registry.Registry, profile domain.Profile, options runner.Options) *model {
-	return newModelWithWorkflows(ctx, registry, nil, profile, options)
+	return newModelWithProfiles(ctx, registry, nil, []domain.Profile{profile}, profile, options)
 }
 
 func newModelWithWorkflows(ctx context.Context, registry *registry.Registry, workflowRegistry *workflow.Registry, profile domain.Profile, options runner.Options) *model {
+	return newModelWithProfiles(ctx, registry, workflowRegistry, []domain.Profile{profile}, profile, options)
+}
+
+func newModelWithProfiles(ctx context.Context, registry *registry.Registry, workflowRegistry *workflow.Registry, profiles []domain.Profile, profile domain.Profile, options runner.Options) *model {
 	filter := textinput.New()
 	filter.Prompt = "/ "
 	filter.Placeholder = "filter features"
@@ -140,6 +147,7 @@ func newModelWithWorkflows(ctx context.Context, registry *registry.Registry, wor
 		selected:          make(map[string]bool),
 		profileParameters: make(map[string]map[string]any),
 		statuses:          make(map[string]domain.Status),
+		profiles:          profiles,
 		table: table.New(
 			table.WithFocused(true),
 			table.WithStyles(styles),
@@ -173,10 +181,22 @@ func newModelWithWorkflows(ctx context.Context, registry *registry.Registry, wor
 			{Title: "STEPS", Width: 7},
 		}),
 	)
+	m.profileTable = table.New(
+		table.WithFocused(true),
+		table.WithStyles(styles),
+		table.WithWidth(78),
+		table.WithHeight(10),
+		table.WithColumns([]table.Column{
+			{Title: "#", Width: 4},
+			{Title: "PROFILE", Width: 45},
+			{Title: "FEATURES", Width: 10},
+		}),
+	)
 	if workflowRegistry != nil {
 		m.workflows = workflowRegistry.List()
 	}
 	m.refreshWorkflowRows()
+	m.refreshProfileRows()
 	m.sshInputs = newSSHInputs()
 	m.sshOutput.SetContent("SSH results will appear here.")
 	for index, feature := range m.features {
@@ -185,6 +205,12 @@ func newModelWithWorkflows(ctx context.Context, registry *registry.Registry, wor
 	for _, item := range profile.Features {
 		m.selected[item.ID] = true
 		m.profileParameters[item.ID] = item.Parameters
+	}
+	for index, available := range m.profiles {
+		if strings.EqualFold(available.Name, profile.Name) {
+			m.profileTable.SetCursor(index)
+			break
+		}
 	}
 	m.refreshPlan()
 	m.refreshRows()
@@ -352,10 +378,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.help = true
 		return m, nil
 	case "tab":
-		m.activeTab = (m.activeTab + 1) % 5
+		m.activeTab = (m.activeTab + 1) % 6
 		return m, nil
 	case "shift+tab":
-		m.activeTab = (m.activeTab + 4) % 5
+		m.activeTab = (m.activeTab + 5) % 6
 		return m, nil
 	case "1":
 		m.activeTab = tabFeatures
@@ -372,6 +398,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "5":
 		m.activeTab = tabWorkflows
 		return m, nil
+	case "6":
+		m.activeTab = tabProfiles
+		return m, nil
 	case "/":
 		if m.activeTab == tabFeatures && !m.running {
 			return m, m.filter.Focus()
@@ -381,6 +410,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggleCurrent()
 		} else if m.activeTab == tabWorkflows && !m.running && !m.remoteRunning {
 			return m, m.loadCurrentWorkflow()
+		} else if m.activeTab == tabProfiles && !m.running && !m.remoteRunning {
+			m.loadCurrentProfile()
 		}
 		return m, nil
 	case "a":
@@ -431,6 +462,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.sshOutput, cmd = m.sshOutput.Update(msg)
 	} else if m.activeTab == tabWorkflows {
 		m.workflowTable, cmd = m.workflowTable.Update(msg)
+	} else if m.activeTab == tabProfiles {
+		m.profileTable, cmd = m.profileTable.Update(msg)
 	}
 	return m, cmd
 }
@@ -680,6 +713,30 @@ func (m *model) loadCurrentWorkflow() tea.Cmd {
 	return m.focusSSH(sshWorkflowConfig)
 }
 
+func (m *model) loadCurrentProfile() {
+	index := m.profileTable.Cursor()
+	if index < 0 || index >= len(m.profiles) {
+		m.notice = "No profile available"
+		return
+	}
+	profile := m.profiles[index]
+	m.profile = profile
+	clear(m.selected)
+	clear(m.profileParameters)
+	clear(m.statuses)
+	m.filter.Blur()
+	m.filter.SetValue("")
+	m.runErr = nil
+	m.notice = fmt.Sprintf("Profile %s loaded: %d feature(s) selected", profile.Name, len(profile.Features))
+	for _, item := range profile.Features {
+		m.selected[item.ID] = true
+		m.profileParameters[item.ID] = item.Parameters
+	}
+	m.refreshPlan()
+	m.refreshRows()
+	m.activeTab = tabFeatures
+}
+
 func (m *model) toggleCurrent() {
 	row := m.table.SelectedRow()
 	if len(row) < 4 {
@@ -810,6 +867,18 @@ func (m *model) refreshWorkflowRows() {
 	m.workflowTable.SetRows(rows)
 }
 
+func (m *model) refreshProfileRows() {
+	rows := make([]table.Row, 0, len(m.profiles))
+	for index, profile := range m.profiles {
+		rows = append(rows, table.Row{
+			fmt.Sprintf("%d", index+1),
+			profile.Name,
+			fmt.Sprintf("%d", len(profile.Features)),
+		})
+	}
+	m.profileTable.SetRows(rows)
+}
+
 func (m *model) filteredFeatures() []domain.Feature {
 	query := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 	if query == "" {
@@ -875,6 +944,13 @@ func (m *model) resize(width, height int) {
 		{Title: "WORKFLOW", Width: max(leftWidth-27, 18)},
 		{Title: "VERSION", Width: 9},
 		{Title: "STEPS", Width: 7},
+	})
+	m.profileTable.SetWidth(max(leftWidth-2, 20))
+	m.profileTable.SetHeight(max(contentHeight-2, 3))
+	m.profileTable.SetColumns([]table.Column{
+		{Title: "#", Width: 4},
+		{Title: "PROFILE", Width: max(leftWidth-18, 18)},
+		{Title: "FEATURES", Width: 10},
 	})
 	m.logs.Width = max(m.width-4, 20)
 	m.logs.Height = max(contentHeight-2, 3)

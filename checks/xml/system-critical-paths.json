@@ -2,24 +2,45 @@
   "apiVersion": "syssetup/xml-check/v1",
   "checks": [
     {
-      "id": "application-data-path",
-      "xpath": "/system/paths/application",
-      "expected": "/data/app",
-      "compare": "exact",
+      "id": "amf-support-tai",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='sctp_handler_service']/*[local-name()='sctp_conf']/*[local-name()='support_tai']",
+      "reportOnly": true,
       "required": true
     },
     {
-      "id": "application-log-path",
-      "xpath": "/system/paths/log",
-      "expected": "/data/log",
-      "compare": "exact",
+      "id": "amf-guami-list",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='ctx_management']/*[local-name()='amf_info']/*[local-name()='guami_list']",
+      "reportOnly": true,
       "required": true
     },
     {
-      "id": "vlan-gateway",
-      "xpath": "/system/network/vlan/gateway",
-      "expected": "10.0.36.254",
-      "compare": "ip",
+      "id": "amf-nf-services",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='ctx_management']/*[local-name()='profile_info']/*[local-name()='nf_services']",
+      "reportOnly": true,
+      "required": true
+    },
+    {
+      "id": "amf-plmn-list",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='ctx_management']/*[local-name()='profile_info']/*[local-name()='plmn_list']",
+      "reportOnly": true,
+      "required": true
+    },
+    {
+      "id": "amf-nrf-list",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='mm_service']/*[local-name()='nf_conf']/*[local-name()='nrf_list']",
+      "reportOnly": true,
+      "required": true
+    },
+    {
+      "id": "amf-smf-prefix-list",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='mm_service']/*[local-name()='nf_conf']/*[local-name()='smf_prefix_list']",
+      "reportOnly": true,
+      "required": true
+    },
+    {
+      "id": "amf-default-nrf-uri",
+      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='mm_service']/*[local-name()='nf_conf']/*[local-name()='default_nrf_uri']",
+      "reportOnly": true,
       "required": true
     }
   ]

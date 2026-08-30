@@ -21,8 +21,8 @@ func New(input io.Reader, output io.Writer) *UI {
 	return &UI{input: input, output: output}
 }
 
-func (u *UI) Run(ctx context.Context, registry *registry.Registry, workflows *workflow.Registry, profile domain.Profile, options runner.Options) error {
-	dashboard := newModelWithWorkflows(ctx, registry, workflows, profile, options)
+func (u *UI) Run(ctx context.Context, registry *registry.Registry, workflows *workflow.Registry, profiles []domain.Profile, profile domain.Profile, options runner.Options) error {
+	dashboard := newModelWithProfiles(ctx, registry, workflows, profiles, profile, options)
 	program := tea.NewProgram(
 		dashboard,
 		tea.WithContext(ctx),

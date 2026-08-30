@@ -186,6 +186,56 @@ func TestWorkflowLoadsIntoSSHForm(t *testing.T) {
 	}
 }
 
+func TestProfileCanBeSwitchedWithoutRestartingTUI(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	writeDashboardFeature(t, root, "verify", `,"parameters":{"xml_file":{"type":"string","required":true}}`)
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseProfile := domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "base",
+		Features:   []domain.FeatureSelection{{ID: "base"}},
+	}
+	verifyProfile := domain.Profile{
+		APIVersion:  "syssetup/v1",
+		Name:        "verify-config",
+		Description: "Verify an XML file",
+		Features: []domain.FeatureSelection{{
+			ID:         "verify",
+			Parameters: map[string]any{"xml_file": "/tmp/config.xml"},
+		}},
+	}
+	m := newModelWithProfiles(
+		context.Background(), reg, nil,
+		[]domain.Profile{baseProfile, verifyProfile}, baseProfile,
+		runner.Options{DryRun: true},
+	)
+	m.resize(120, 30)
+	m.activeTab = tabProfiles
+	m.profileTable.SetCursor(1)
+	view := m.View()
+	if !strings.Contains(view, "verify-config") || !strings.Contains(view, "xml_file") {
+		t.Fatalf("profile view is incomplete: %s", view)
+	}
+
+	m.loadCurrentProfile()
+	if m.activeTab != tabFeatures || m.profile.Name != "verify-config" {
+		t.Fatalf("profile was not loaded: tab=%d profile=%q", m.activeTab, m.profile.Name)
+	}
+	if m.selected["base"] || !m.selected["verify"] {
+		t.Fatalf("selection was not replaced: %#v", m.selected)
+	}
+	if got := m.profileParameters["verify"]["xml_file"]; got != "/tmp/config.xml" {
+		t.Fatalf("profile parameter was not loaded: %#v", got)
+	}
+	if len(m.resolved) != 1 || m.resolved[0].Feature.ID != "verify" {
+		t.Fatalf("unexpected resolved plan: %#v", m.resolved)
+	}
+}
+
 func writeDashboardFeature(t *testing.T, root, id, extra string) {
 	t.Helper()
 	directory := filepath.Join(root, id)

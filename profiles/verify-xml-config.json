@@ -6,7 +6,7 @@
     {
       "id": "verify-xml-config",
       "parameters": {
-        "xml_file": "/path/to/system.xml",
+        "xml_file": "/path/to/config_amf.xml",
         "rules_file": "checks/xml/system-critical-paths.json"
       }
     }

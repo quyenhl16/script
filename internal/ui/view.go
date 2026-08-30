@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -30,6 +31,8 @@ func (m *model) View() string {
 		content = m.sshView(contentHeight)
 	case tabWorkflows:
 		content = m.workflowsView(contentHeight)
+	case tabProfiles:
+		content = m.profilesView(contentHeight)
 	default:
 		content = m.featuresView(contentHeight)
 	}
@@ -50,7 +53,7 @@ func (m *model) headerView() string {
 }
 
 func (m *model) tabsView() string {
-	tabs := []string{"1 Features", "2 Plan", "3 Logs", "4 Remote SSH", "5 Workflows"}
+	tabs := []string{"1 Features", "2 Plan", "3 Logs", "4 Remote SSH", "5 Workflows", "6 Profiles"}
 	parts := make([]string, len(tabs))
 	for index, label := range tabs {
 		if tabID(index) == m.activeTab {
@@ -142,6 +145,47 @@ func (m *model) workflowsView(height int) string {
 	rightWidth := m.width - leftWidth - 1
 	detail := panelStyle.Width(max(rightWidth-2, 20)).Height(max(height-2, 2)).Render(m.workflowDetailView())
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", detail)
+}
+
+func (m *model) profilesView(height int) string {
+	leftWidth := m.width - 2
+	if m.width >= 100 {
+		leftWidth = m.width*2/3 - 1
+	}
+	left := panelStyle.Width(max(leftWidth-2, 20)).Height(max(height-2, 2)).Render(m.profileTable.View())
+	if m.width < 100 {
+		return left
+	}
+	rightWidth := m.width - leftWidth - 1
+	detail := panelStyle.Width(max(rightWidth-2, 20)).Height(max(height-2, 2)).Render(m.profileDetailView())
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", detail)
+}
+
+func (m *model) profileDetailView() string {
+	profile, found := m.currentProfile()
+	if !found {
+		return mutedStyle.Render("No profile available")
+	}
+	lines := []string{
+		panelTitleStyle.Render(profile.Name),
+		mutedStyle.Render(profile.Description),
+		"",
+		keyStyle.Render("Features"),
+	}
+	for _, item := range profile.Features {
+		parameterNames := make([]string, 0, len(item.Parameters))
+		for name := range item.Parameters {
+			parameterNames = append(parameterNames, name)
+		}
+		sort.Strings(parameterNames)
+		detail := ""
+		if len(parameterNames) > 0 {
+			detail = mutedStyle.Render("  params: " + strings.Join(parameterNames, ", "))
+		}
+		lines = append(lines, valueStyle.Render(item.ID)+detail)
+	}
+	lines = append(lines, "", mutedStyle.Render("Press Enter to load this profile."))
+	return strings.Join(lines, "\n")
 }
 
 func (m *model) workflowDetailView() string {
@@ -268,6 +312,9 @@ func (m *model) footerView() string {
 	if m.activeTab == tabWorkflows {
 		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load workflow  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
 	}
+	if m.activeTab == tabProfiles {
+		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load profile  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
+	}
 	items := []string{
 		keyStyle.Render("j/k") + " move",
 		keyStyle.Render("space") + " select",
@@ -294,6 +341,7 @@ func (m *model) helpView() string {
 		keyStyle.Render("1 / 2 / 3") + "       Features / Plan / Logs",
 		keyStyle.Render("4") + "               Remote SSH form",
 		keyStyle.Render("5") + "               Workflows",
+		keyStyle.Render("6") + "               Profiles (Enter to load)",
 		keyStyle.Render("tab / shift+tab") + " Switch dashboard view",
 		keyStyle.Render("r") + "               Execute the current plan",
 		keyStyle.Render("c") + "               Cancel the running plan",
@@ -324,6 +372,14 @@ func (m *model) currentWorkflow() (workflow.Definition, bool) {
 		return workflow.Definition{}, false
 	}
 	return m.workflowRegistry.Get(row[1])
+}
+
+func (m *model) currentProfile() (domain.Profile, bool) {
+	index := m.profileTable.Cursor()
+	if index < 0 || index >= len(m.profiles) {
+		return domain.Profile{}, false
+	}
+	return m.profiles[index], true
 }
 
 func (m *model) workflowIndex(id string) int {

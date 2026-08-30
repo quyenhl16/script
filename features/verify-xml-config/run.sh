@@ -27,6 +27,7 @@ import os
 import re
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 
 MAX_INPUT_SIZE = 50 * 1024 * 1024
 SUPPORTED_COMPARISONS = {"exact", "trimmed", "integer", "boolean", "ip", "regex"}
@@ -84,6 +85,57 @@ def selected_value(xml_path, xpath):
     return result.stdout
 
 
+def selected_elements(xml_path, xpath):
+    result = run_xmllint(xml_path, f"({xpath})")
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "cannot read XPath nodes"
+        raise InputError(detail)
+    try:
+        wrapper = ET.fromstring(f"<syssetup-results>{result.stdout}</syssetup-results>")
+    except ET.ParseError as error:
+        raise InputError(f"reportOnly XPath must select XML elements: {error}") from error
+    return list(wrapper)
+
+
+def local_name(tag):
+    return tag.rsplit("}", 1)[-1]
+
+
+def leaf_values(element, prefix=""):
+    children = [child for child in element if isinstance(child.tag, str)]
+    if not children:
+        yield prefix or local_name(element.tag), (element.text or "").strip()
+        return
+
+    totals = {}
+    for child in children:
+        name = local_name(child.tag)
+        totals[name] = totals.get(name, 0) + 1
+    seen = {}
+    for child in children:
+        name = local_name(child.tag)
+        seen[name] = seen.get(name, 0) + 1
+        label = name if totals[name] == 1 else f"{name}[{seen[name]}]"
+        child_prefix = f"{prefix}.{label}" if prefix else label
+        yield from leaf_values(child, child_prefix)
+
+
+def report_values(check_id, xml_path, xpath, count, sensitive):
+    elements = selected_elements(xml_path, xpath)
+    if len(elements) != count:
+        raise InputError(f"XPath count changed while reading nodes: expected {count}, got {len(elements)}")
+    print(f"[PASS] {check_id}: matched={count}")
+    for index, element in enumerate(elements, start=1):
+        heading = f"  [{index}]" if count > 1 else "  [value]"
+        print(heading)
+        leaves = list(leaf_values(element))
+        if not leaves:
+            print("    <empty>")
+            continue
+        for path, value in leaves:
+            print(f"    {path}={display(value, sensitive)}")
+
+
 def canonical_boolean(value):
     normalized = value.strip().lower()
     if normalized in {"true", "1", "yes", "on"}:
@@ -129,14 +181,17 @@ def main():
         raise InputError(detail)
 
     failures = 0
+    passed = 0
+    reported = 0
+    skipped = 0
     seen_ids = set()
     for index, check in enumerate(checks, start=1):
         if not isinstance(check, dict):
             raise InputError(f"check {index} must be an object")
         check_id = str(check.get("id", "")).strip()
         xpath = str(check.get("xpath", "")).strip()
-        if not check_id or not xpath or "expected" not in check:
-            raise InputError(f"check {index} requires id, xpath and expected")
+        if not check_id or not xpath:
+            raise InputError(f"check {index} requires id and xpath")
         if re.fullmatch(r"[A-Za-z][A-Za-z0-9._-]*", check_id) is None:
             raise InputError(f"check {index} has invalid id: {check_id!r}")
         if check_id in seen_ids:
@@ -147,11 +202,18 @@ def main():
             raise InputError(f"check {check_id}: unsupported comparison {mode!r}")
         required = check.get("required", True)
         sensitive = check.get("sensitive", False)
-        if not isinstance(required, bool) or not isinstance(sensitive, bool):
-            raise InputError(f"check {check_id}: required and sensitive must be boolean")
-        expected = check["expected"]
-        if expected is None or isinstance(expected, (dict, list)):
-            raise InputError(f"check {check_id}: expected must be a scalar value")
+        report_only = check.get("reportOnly", False)
+        if not isinstance(required, bool) or not isinstance(sensitive, bool) or not isinstance(report_only, bool):
+            raise InputError(f"check {check_id}: required, sensitive and reportOnly must be boolean")
+        if report_only:
+            if "expected" in check:
+                raise InputError(f"check {check_id}: reportOnly check must not define expected")
+        else:
+            if "expected" not in check:
+                raise InputError(f"check {check_id}: expected is required unless reportOnly is true")
+            expected = check["expected"]
+            if expected is None or isinstance(expected, (dict, list)):
+                raise InputError(f"check {check_id}: expected must be a scalar value")
 
         try:
             count = selected_node_count(xml_path, xpath)
@@ -163,6 +225,14 @@ def main():
                 failures += 1
             else:
                 print(f"[SKIP] {check_id}: optional XPath did not select a node")
+                skipped += 1
+            continue
+        if report_only:
+            try:
+                report_values(check_id, xml_path, xpath, count, sensitive)
+            except InputError as error:
+                raise InputError(f"check {check_id}: {error}") from error
+            reported += 1
             continue
         if count != 1:
             print(f"[FAIL] {check_id}: XPath selected {count} nodes; expected exactly one", file=sys.stderr)
@@ -176,6 +246,7 @@ def main():
             raise InputError(f"check {check_id}: invalid {mode} value: {error}") from error
         if matched:
             print(f"[PASS] {check_id}: value={display(actual, sensitive)}")
+            passed += 1
         else:
             print(
                 f"[FAIL] {check_id}: expected={display(str(expected), sensitive)} "
@@ -184,8 +255,10 @@ def main():
             )
             failures += 1
 
-    passed = len(checks) - failures
-    print(f"Summary: total={len(checks)} passed_or_skipped={passed} failed={failures}")
+    print(
+        f"Summary: total={len(checks)} passed={passed} reported={reported} "
+        f"skipped={skipped} failed={failures}"
+    )
     return 1 if failures else 0
 
 
