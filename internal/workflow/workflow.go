@@ -1,0 +1,421 @@
+package workflow
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"sync"
+	"time"
+
+	"golang.org/x/crypto/ssh"
+
+	"github.com/quyenhl16/script/internal/registry"
+	"github.com/quyenhl16/script/internal/remote"
+)
+
+const (
+	definitionAPIVersion = "syssetup/workflow/v1"
+	configAPIVersion     = "syssetup/workflow-config/v1"
+)
+
+type Definition struct {
+	APIVersion    string `json:"apiVersion"`
+	ID            string `json:"id"`
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	Description   string `json:"description,omitempty"`
+	FailurePolicy string `json:"failurePolicy,omitempty"`
+	Steps         []Step `json:"steps"`
+	Directory     string `json:"-"`
+}
+
+type Step struct {
+	ID         string      `json:"id"`
+	Feature    string      `json:"feature"`
+	Needs      []string    `json:"needs,omitempty"`
+	DeriveArgs *DeriveArgs `json:"deriveArgs,omitempty"`
+}
+
+type DeriveArgs struct {
+	Step        string `json:"step"`
+	Prefix      string `json:"prefix"`
+	StripPrefix bool   `json:"stripPrefix,omitempty"`
+	RequireEach bool   `json:"requireEach,omitempty"`
+}
+
+type Config struct {
+	APIVersion string                  `json:"apiVersion"`
+	Workflow   string                  `json:"workflow"`
+	Steps      map[string][]Invocation `json:"steps"`
+	Directory  string                  `json:"-"`
+}
+
+type Invocation struct {
+	Args      []string            `json:"args"`
+	Artifacts []ArtifactReference `json:"artifacts,omitempty"`
+}
+
+type ArtifactReference struct {
+	ID     string `json:"id"`
+	Source string `json:"source"`
+}
+
+type Registry struct {
+	definitions map[string]Definition
+	features    *registry.Registry
+}
+
+type Status string
+
+const (
+	StatusDone    Status = "done"
+	StatusFailed  Status = "failed"
+	StatusSkipped Status = "skipped"
+)
+
+type Result struct {
+	Server     string
+	StepID     string
+	FeatureID  string
+	Invocation int
+	Status     Status
+	Output     string
+	Duration   time.Duration
+	Err        error
+}
+
+type ServerResult struct {
+	Address string
+	Success bool
+}
+
+type Execution struct {
+	Results []Result
+	Servers []ServerResult
+}
+
+type preparedStep struct {
+	definition  Step
+	script      []byte
+	invocations []preparedInvocation
+	timeout     time.Duration
+}
+
+type preparedInvocation struct {
+	args      []string
+	artifacts []remote.Artifact
+}
+
+type serverExecution struct {
+	results []Result
+	success bool
+}
+
+func Load(root string, features *registry.Registry) (*Registry, error) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return nil, fmt.Errorf("read workflow directory %q: %w", root, err)
+	}
+	result := &Registry{definitions: make(map[string]Definition), features: features}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		directory := filepath.Join(root, entry.Name())
+		path := filepath.Join(directory, "workflow.json")
+		data, readErr := os.ReadFile(path)
+		if os.IsNotExist(readErr) {
+			continue
+		}
+		if readErr != nil {
+			return nil, fmt.Errorf("read %q: %w", path, readErr)
+		}
+		var definition Definition
+		if err := json.Unmarshal(data, &definition); err != nil {
+			return nil, fmt.Errorf("parse %q: %w", path, err)
+		}
+		definition.Directory = directory
+		if err := validateDefinition(definition, features); err != nil {
+			return nil, fmt.Errorf("workflow %q: %w", entry.Name(), err)
+		}
+		if _, found := result.definitions[definition.ID]; found {
+			return nil, fmt.Errorf("duplicate workflow ID %q", definition.ID)
+		}
+		result.definitions[definition.ID] = definition
+	}
+	if len(result.definitions) == 0 {
+		return nil, fmt.Errorf("no workflows found in %q", root)
+	}
+	return result, nil
+}
+
+func validateDefinition(definition Definition, features *registry.Registry) error {
+	if definition.APIVersion != definitionAPIVersion {
+		return fmt.Errorf("unsupported apiVersion %q", definition.APIVersion)
+	}
+	if definition.ID == "" || definition.Name == "" || definition.Version == "" {
+		return errors.New("id, name and version are required")
+	}
+	if definition.FailurePolicy == "" {
+		definition.FailurePolicy = "stop-server"
+	}
+	if definition.FailurePolicy != "stop-server" {
+		return fmt.Errorf("unsupported failurePolicy %q", definition.FailurePolicy)
+	}
+	if len(definition.Steps) == 0 {
+		return errors.New("at least one step is required")
+	}
+	seen := make(map[string]bool)
+	for _, step := range definition.Steps {
+		if step.ID == "" || step.Feature == "" {
+			return errors.New("every step requires id and feature")
+		}
+		if seen[step.ID] {
+			return fmt.Errorf("duplicate step ID %q", step.ID)
+		}
+		for _, dependency := range step.Needs {
+			if !seen[dependency] {
+				return fmt.Errorf("step %q needs unknown or later step %q", step.ID, dependency)
+			}
+		}
+		feature, found := features.Get(step.Feature)
+		if !found {
+			return fmt.Errorf("step %q references unknown feature %q", step.ID, step.Feature)
+		}
+		if !feature.RemoteOnly {
+			return fmt.Errorf("step %q feature %q must be remote-only", step.ID, step.Feature)
+		}
+		if step.DeriveArgs != nil {
+			if !seen[step.DeriveArgs.Step] {
+				return fmt.Errorf("step %q derives arguments from unknown or later step %q", step.ID, step.DeriveArgs.Step)
+			}
+			if step.DeriveArgs.Prefix == "" {
+				return fmt.Errorf("step %q deriveArgs.prefix is required", step.ID)
+			}
+			if !contains(step.Needs, step.DeriveArgs.Step) {
+				return fmt.Errorf("step %q must depend on argument source step %q", step.ID, step.DeriveArgs.Step)
+			}
+		}
+		seen[step.ID] = true
+	}
+	return nil
+}
+
+func (r *Registry) List() []Definition {
+	definitions := make([]Definition, 0, len(r.definitions))
+	for _, definition := range r.definitions {
+		definitions = append(definitions, definition)
+	}
+	sort.Slice(definitions, func(i, j int) bool {
+		return strings.ToLower(definitions[i].ID) < strings.ToLower(definitions[j].ID)
+	})
+	return definitions
+}
+
+func (r *Registry) Get(id string) (Definition, bool) {
+	definition, found := r.definitions[id]
+	return definition, found
+}
+
+func LoadConfig(path string) (Config, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return Config{}, fmt.Errorf("read workflow config: %w", err)
+	}
+	var config Config
+	if err := json.Unmarshal(data, &config); err != nil {
+		return Config{}, fmt.Errorf("parse workflow config: %w", err)
+	}
+	if config.APIVersion != configAPIVersion {
+		return Config{}, fmt.Errorf("unsupported workflow config apiVersion %q", config.APIVersion)
+	}
+	if config.Workflow == "" {
+		return Config{}, errors.New("workflow config requires workflow")
+	}
+	config.Directory = filepath.Dir(filepath.Clean(path))
+	return config, nil
+}
+
+func (r *Registry) ValidateConfig(definition Definition, config Config) error {
+	if config.Workflow != definition.ID {
+		return fmt.Errorf("config is for workflow %q, expected %q", config.Workflow, definition.ID)
+	}
+	known := make(map[string]Step, len(definition.Steps))
+	for _, step := range definition.Steps {
+		known[step.ID] = step
+		if step.DeriveArgs == nil && len(config.Steps[step.ID]) == 0 {
+			return fmt.Errorf("step %q requires at least one invocation", step.ID)
+		}
+	}
+	for stepID, invocations := range config.Steps {
+		step, found := known[stepID]
+		if !found {
+			return fmt.Errorf("config contains unknown step %q", stepID)
+		}
+		if step.DeriveArgs != nil && len(invocations) > 0 {
+			return fmt.Errorf("derived step %q must not define invocations", stepID)
+		}
+		for index, invocation := range invocations {
+			if len(invocation.Args) == 0 {
+				return fmt.Errorf("step %q invocation %d has no arguments", stepID, index+1)
+			}
+			seenArtifacts := make(map[string]bool)
+			for _, artifact := range invocation.Artifacts {
+				if artifact.ID == "" || strings.TrimSpace(artifact.Source) == "" {
+					return fmt.Errorf("step %q invocation %d artifact requires id and source", stepID, index+1)
+				}
+				if seenArtifacts[artifact.ID] {
+					return fmt.Errorf("step %q invocation %d has duplicate artifact %q", stepID, index+1, artifact.ID)
+				}
+				seenArtifacts[artifact.ID] = true
+			}
+		}
+	}
+	for _, step := range definition.Steps {
+		if step.DeriveArgs != nil {
+			if _, err := deriveInvocations(step, config); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func deriveInvocations(step Step, config Config) ([]Invocation, error) {
+	if step.DeriveArgs == nil {
+		return config.Steps[step.ID], nil
+	}
+	seen := make(map[string]bool)
+	var arguments []string
+	for _, source := range config.Steps[step.DeriveArgs.Step] {
+		matched := 0
+		for _, argument := range source.Args {
+			if !strings.HasPrefix(argument, step.DeriveArgs.Prefix) {
+				continue
+			}
+			value := argument
+			if step.DeriveArgs.StripPrefix {
+				value = strings.TrimPrefix(argument, step.DeriveArgs.Prefix)
+			}
+			if value != "" && !seen[value] {
+				seen[value] = true
+				arguments = append(arguments, value)
+			}
+			matched++
+		}
+		if step.DeriveArgs.RequireEach && matched == 0 {
+			return nil, fmt.Errorf("step %q source invocation has no argument with prefix %q", step.ID, step.DeriveArgs.Prefix)
+		}
+	}
+	if len(arguments) == 0 {
+		return nil, fmt.Errorf("step %q could not derive arguments with prefix %q from step %q", step.ID, step.DeriveArgs.Prefix, step.DeriveArgs.Step)
+	}
+	return []Invocation{{Args: arguments}}, nil
+}
+
+func (r *Registry) Execute(ctx context.Context, definition Definition, config Config, servers []remote.Server, hostKeys ssh.HostKeyCallback) (Execution, error) {
+	if err := r.ValidateConfig(definition, config); err != nil {
+		return Execution{}, err
+	}
+	prepared := make([]preparedStep, 0, len(definition.Steps))
+	for _, step := range definition.Steps {
+		feature, _ := r.features.Get(step.Feature)
+		script, err := remote.LoadScript(filepath.Join(feature.Directory, feature.Entrypoint))
+		if err != nil {
+			return Execution{}, fmt.Errorf("load step %q script: %w", step.ID, err)
+		}
+		invocations, err := deriveInvocations(step, config)
+		if err != nil {
+			return Execution{}, err
+		}
+		preparedInvocations := make([]preparedInvocation, 0, len(invocations))
+		for invocationIndex, invocation := range invocations {
+			preparedInvocation := preparedInvocation{args: invocation.Args}
+			for _, reference := range invocation.Artifacts {
+				source := reference.Source
+				if !filepath.IsAbs(source) {
+					source = filepath.Join(config.Directory, source)
+				}
+				artifact, loadErr := remote.LoadArtifact(reference.ID, source)
+				if loadErr != nil {
+					return Execution{}, fmt.Errorf("load step %q invocation %d: %w", step.ID, invocationIndex+1, loadErr)
+				}
+				preparedInvocation.artifacts = append(preparedInvocation.artifacts, artifact)
+			}
+			preparedInvocations = append(preparedInvocations, preparedInvocation)
+		}
+		prepared = append(prepared, preparedStep{
+			definition: step, script: script, invocations: preparedInvocations,
+			timeout: time.Duration(feature.TimeoutSeconds) * time.Second,
+		})
+	}
+
+	serverExecutions := make([]serverExecution, len(servers))
+	var group sync.WaitGroup
+	for index, server := range servers {
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			serverExecutions[index] = executeServer(ctx, server, prepared, hostKeys)
+		}()
+	}
+	group.Wait()
+
+	execution := Execution{}
+	for index, server := range servers {
+		execution.Results = append(execution.Results, serverExecutions[index].results...)
+		execution.Servers = append(execution.Servers, ServerResult{Address: server.Address, Success: serverExecutions[index].success})
+	}
+	return execution, nil
+}
+
+func executeServer(ctx context.Context, server remote.Server, steps []preparedStep, hostKeys ssh.HostKeyCallback) serverExecution {
+	result := serverExecution{success: true}
+	failed := false
+	for _, step := range steps {
+		if failed {
+			result.results = append(result.results, Result{
+				Server: server.Address, StepID: step.definition.ID,
+				FeatureID: step.definition.Feature, Status: StatusSkipped,
+			})
+			continue
+		}
+		for invocationIndex, invocation := range step.invocations {
+			remoteResult := remote.Execute(ctx, remote.Request{
+				Servers: []remote.Server{server}, Script: step.script, ScriptArgs: invocation.args,
+				Artifacts: invocation.artifacts,
+				Timeout:   step.timeout, HostKeys: hostKeys,
+			})[0]
+			status := StatusDone
+			if remoteResult.Err != nil {
+				status = StatusFailed
+				failed = true
+				result.success = false
+			}
+			result.results = append(result.results, Result{
+				Server: remoteResult.Address, StepID: step.definition.ID,
+				FeatureID: step.definition.Feature, Invocation: invocationIndex + 1,
+				Status: status, Output: remoteResult.Output, Duration: remoteResult.Duration,
+				Err: remoteResult.Err,
+			})
+			if failed {
+				break
+			}
+		}
+	}
+	return result
+}
+
+func contains(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}

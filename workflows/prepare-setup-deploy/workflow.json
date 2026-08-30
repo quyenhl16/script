@@ -1,0 +1,30 @@
+{
+  "apiVersion": "syssetup/workflow/v1",
+  "id": "prepare-setup-deploy",
+  "name": "Prepare Setup Deploy",
+  "version": "1.0.0",
+  "description": "Prepare local paths, create Bond VLANs, then verify their gateways",
+  "failurePolicy": "stop-server",
+  "steps": [
+    {
+      "id": "create-local-path",
+      "feature": "create-local-path"
+    },
+    {
+      "id": "create-vlan",
+      "feature": "create-bond-vlan",
+      "needs": ["create-local-path"]
+    },
+    {
+      "id": "verify-network",
+      "feature": "verify-network",
+      "needs": ["create-vlan"],
+      "deriveArgs": {
+        "step": "create-vlan",
+        "prefix": "gateway=",
+        "stripPrefix": true,
+        "requireEach": true
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "apiVersion": "syssetup/workflow-config/v1",
+  "workflow": "verify-system-xml",
+  "steps": {
+    "verify-xml-config": [
+      {
+        "args": [
+          "--rules-artifact",
+          "system-critical-paths"
+        ],
+        "artifacts": [
+          {
+            "id": "system-critical-paths",
+            "source": "../checks/xml/system-critical-paths.json"
+          }
+        ]
+      }
+    ]
+  }
+}

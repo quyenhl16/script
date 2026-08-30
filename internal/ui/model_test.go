@@ -10,6 +10,7 @@ import (
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
 	"github.com/quyenhl16/script/internal/runner"
+	"github.com/quyenhl16/script/internal/workflow"
 )
 
 func TestFilterAndSelectionBuildExecutionPlan(t *testing.T) {
@@ -137,6 +138,51 @@ func TestRemoteFeatureOpensSSHScriptForm(t *testing.T) {
 	}
 	if m.selected["create-bond-vlan"] {
 		t.Fatal("remote-only feature was added to the local execution plan")
+	}
+}
+
+func TestWorkflowLoadsIntoSSHForm(t *testing.T) {
+	featuresRoot := t.TempDir()
+	for _, id := range []string{"create-local-path", "create-bond-vlan", "verify-network"} {
+		writeDashboardFeature(t, featuresRoot, id, `,"remoteOnly":true`)
+	}
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowsRoot := t.TempDir()
+	workflowDirectory := filepath.Join(workflowsRoot, "prepare-setup-deploy")
+	if err := os.MkdirAll(workflowDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{
+  "apiVersion":"syssetup/workflow/v1", "id":"prepare-setup-deploy",
+  "name":"Prepare Setup Deploy", "version":"1", "steps":[
+    {"id":"paths","feature":"create-local-path"},
+    {"id":"vlan","feature":"create-bond-vlan","needs":["paths"]},
+    {"id":"verify","feature":"verify-network","needs":["vlan"],
+     "deriveArgs":{"step":"vlan","prefix":"gateway=","stripPrefix":true}}
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(workflowDirectory, "workflow.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workflowRegistry, err := workflow.Load(workflowsRoot, features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newModelWithWorkflows(context.Background(), features, workflowRegistry, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	m.resize(120, 30)
+	m.activeTab = tabWorkflows
+	if view := m.View(); !strings.Contains(view, "prepare-setup-deploy") || !strings.Contains(view, "1.3  verify-network") {
+		t.Fatalf("workflow view is incomplete: %s", view)
+	}
+	m.loadCurrentWorkflow()
+	if m.activeTab != tabSSH || m.sshMode != sshWorkflow || m.sshFocus != sshWorkflowConfig {
+		t.Fatalf("workflow did not open SSH form: tab=%d mode=%d focus=%d", m.activeTab, m.sshMode, m.sshFocus)
+	}
+	if got := m.sshInputs[sshWorkflowConfig].Value(); got != filepath.Join("workflow-configs", "prepare-setup-deploy.json") {
+		t.Fatalf("workflow config path = %q", got)
 	}
 }
 

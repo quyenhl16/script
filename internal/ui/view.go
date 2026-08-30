@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"github.com/quyenhl16/script/internal/domain"
+	"github.com/quyenhl16/script/internal/workflow"
 )
 
 func (m *model) View() string {
@@ -27,6 +28,8 @@ func (m *model) View() string {
 		content = m.logsView(contentHeight)
 	case tabSSH:
 		content = m.sshView(contentHeight)
+	case tabWorkflows:
+		content = m.workflowsView(contentHeight)
 	default:
 		content = m.featuresView(contentHeight)
 	}
@@ -47,7 +50,7 @@ func (m *model) headerView() string {
 }
 
 func (m *model) tabsView() string {
-	tabs := []string{"1 Features", "2 Plan", "3 Logs", "4 Remote SSH"}
+	tabs := []string{"1 Features", "2 Plan", "3 Logs", "4 Remote SSH", "5 Workflows"}
 	parts := make([]string, len(tabs))
 	for index, label := range tabs {
 		if tabID(index) == m.activeTab {
@@ -67,10 +70,15 @@ func (m *model) sshView(height int) string {
 	mode := "COMMAND"
 	modeHint := "Run one Linux command on every server"
 	activeInputs := []int{sshCommandValue}
-	if m.sshMode == sshScript {
+	switch m.sshMode {
+	case sshScript:
 		mode = "SCRIPT"
 		modeHint = "Upload a local script through stdin and run it with bash"
 		activeInputs = []int{sshScriptPath, sshScriptArgs}
+	case sshWorkflow:
+		mode = "WORKFLOW"
+		modeHint = "Run a configured step-by-step workflow on every server"
+		activeInputs = []int{sshWorkflowConfig}
 	}
 	formLines := []string{
 		panelTitleStyle.Render("Remote SSH") + "  " + contextStyle.Render(mode),
@@ -120,6 +128,45 @@ func (m *model) sshView(height int) string {
 	}
 	result := panelStyle.Width(max(resultWidth-2, 20)).Height(max(height-2, 2)).Render(title + "\n\n" + m.sshOutput.View())
 	return lipgloss.JoinHorizontal(lipgloss.Top, form, " ", result)
+}
+
+func (m *model) workflowsView(height int) string {
+	leftWidth := m.width - 2
+	if m.width >= 100 {
+		leftWidth = m.width*2/3 - 1
+	}
+	left := panelStyle.Width(max(leftWidth-2, 20)).Height(max(height-2, 2)).Render(m.workflowTable.View())
+	if m.width < 100 {
+		return left
+	}
+	rightWidth := m.width - leftWidth - 1
+	detail := panelStyle.Width(max(rightWidth-2, 20)).Height(max(height-2, 2)).Render(m.workflowDetailView())
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", detail)
+}
+
+func (m *model) workflowDetailView() string {
+	definition, found := m.currentWorkflow()
+	if !found {
+		return mutedStyle.Render("No workflow available")
+	}
+	lines := []string{
+		panelTitleStyle.Render(definition.Name),
+		mutedStyle.Render(definition.Description),
+		"",
+		keyStyle.Render("ID") + "       " + valueStyle.Render(definition.ID),
+		keyStyle.Render("Version") + "  " + valueStyle.Render(definition.Version),
+		"",
+		keyStyle.Render("Steps"),
+	}
+	for index, step := range definition.Steps {
+		dependency := ""
+		if len(step.Needs) > 0 {
+			dependency = mutedStyle.Render(" after " + strings.Join(step.Needs, ", "))
+		}
+		lines = append(lines, fmt.Sprintf("%d.%d  %s%s", m.workflowIndex(definition.ID), index+1, step.Feature, dependency))
+	}
+	lines = append(lines, "", mutedStyle.Render("Press Enter to load this workflow."))
+	return strings.Join(lines, "\n")
 }
 
 func (m *model) featuresView(height int) string {
@@ -213,10 +260,13 @@ func (m *model) footerView() string {
 		}
 		return strings.Join([]string{
 			keyStyle.Render("tab/↑↓") + " field",
-			keyStyle.Render("F2") + " command/script",
+			keyStyle.Render("F2") + " command/script/workflow",
 			keyStyle.Render("F5") + " run",
 			keyStyle.Render("esc") + " navigation",
 		}, "  ")
+	}
+	if m.activeTab == tabWorkflows {
+		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load workflow  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
 	}
 	items := []string{
 		keyStyle.Render("j/k") + " move",
@@ -243,10 +293,11 @@ func (m *model) helpView() string {
 		keyStyle.Render("/") + "               Filter features",
 		keyStyle.Render("1 / 2 / 3") + "       Features / Plan / Logs",
 		keyStyle.Render("4") + "               Remote SSH form",
+		keyStyle.Render("5") + "               Workflows",
 		keyStyle.Render("tab / shift+tab") + " Switch dashboard view",
 		keyStyle.Render("r") + "               Execute the current plan",
 		keyStyle.Render("c") + "               Cancel the running plan",
-		keyStyle.Render("F2 / F5") + "         SSH mode / run SSH",
+		keyStyle.Render("F2 / F5") + "         SSH mode / run remote task",
 		keyStyle.Render("? / esc") + "         Close this help",
 		keyStyle.Render("q / ctrl+c") + "      Quit",
 	}, "\n")
@@ -265,6 +316,23 @@ func (m *model) currentFeature() (domain.Feature, bool) {
 		}
 	}
 	return domain.Feature{}, false
+}
+
+func (m *model) currentWorkflow() (workflow.Definition, bool) {
+	row := m.workflowTable.SelectedRow()
+	if len(row) < 2 || m.workflowRegistry == nil {
+		return workflow.Definition{}, false
+	}
+	return m.workflowRegistry.Get(row[1])
+}
+
+func (m *model) workflowIndex(id string) int {
+	for index, definition := range m.workflows {
+		if definition.ID == id {
+			return index + 1
+		}
+	}
+	return 0
 }
 
 func privilege(root bool) string {

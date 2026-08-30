@@ -15,11 +15,13 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
 	"github.com/quyenhl16/script/internal/remote"
 	"github.com/quyenhl16/script/internal/runner"
+	"github.com/quyenhl16/script/internal/workflow"
 )
 
 type tabID int
@@ -29,6 +31,7 @@ const (
 	tabPlan
 	tabLogs
 	tabSSH
+	tabWorkflows
 )
 
 type sshMode int
@@ -36,6 +39,7 @@ type sshMode int
 const (
 	sshCommand sshMode = iota
 	sshScript
+	sshWorkflow
 )
 
 const (
@@ -45,6 +49,7 @@ const (
 	sshCommandValue
 	sshScriptPath
 	sshScriptArgs
+	sshWorkflowConfig
 )
 
 type runFinishedMsg struct {
@@ -59,9 +64,15 @@ type remoteFinishedMsg struct {
 	results []remote.Result
 }
 
+type workflowFinishedMsg struct {
+	execution workflow.Execution
+	err       error
+}
+
 type model struct {
 	ctx               context.Context
 	registry          *registry.Registry
+	workflowRegistry  *workflow.Registry
 	profile           domain.Profile
 	options           runner.Options
 	features          []domain.Feature
@@ -70,16 +81,18 @@ type model struct {
 	profileParameters map[string]map[string]any
 	statuses          map[string]domain.Status
 	resolved          []domain.ResolvedFeature
+	workflows         []workflow.Definition
 
-	table     table.Model
-	filter    textinput.Model
-	logs      viewport.Model
-	sshOutput viewport.Model
-	spinner   spinner.Model
-	activeTab tabID
-	sshInputs []textinput.Model
-	sshFocus  int
-	sshMode   sshMode
+	table         table.Model
+	workflowTable table.Model
+	filter        textinput.Model
+	logs          viewport.Model
+	sshOutput     viewport.Model
+	spinner       spinner.Model
+	activeTab     tabID
+	sshInputs     []textinput.Model
+	sshFocus      int
+	sshMode       sshMode
 
 	width         int
 	height        int
@@ -96,6 +109,10 @@ type model struct {
 }
 
 func newModel(ctx context.Context, registry *registry.Registry, profile domain.Profile, options runner.Options) *model {
+	return newModelWithWorkflows(ctx, registry, nil, profile, options)
+}
+
+func newModelWithWorkflows(ctx context.Context, registry *registry.Registry, workflowRegistry *workflow.Registry, profile domain.Profile, options runner.Options) *model {
 	filter := textinput.New()
 	filter.Prompt = "/ "
 	filter.Placeholder = "filter features"
@@ -115,6 +132,7 @@ func newModel(ctx context.Context, registry *registry.Registry, profile domain.P
 	m := &model{
 		ctx:               ctx,
 		registry:          registry,
+		workflowRegistry:  workflowRegistry,
 		profile:           profile,
 		options:           options,
 		features:          registry.List(),
@@ -143,6 +161,22 @@ func newModel(ctx context.Context, registry *registry.Registry, profile domain.P
 		notice:    "Ready",
 		sshFocus:  -1,
 	}
+	m.workflowTable = table.New(
+		table.WithFocused(true),
+		table.WithStyles(styles),
+		table.WithWidth(78),
+		table.WithHeight(10),
+		table.WithColumns([]table.Column{
+			{Title: "#", Width: 4},
+			{Title: "WORKFLOW", Width: 38},
+			{Title: "VERSION", Width: 9},
+			{Title: "STEPS", Width: 7},
+		}),
+	)
+	if workflowRegistry != nil {
+		m.workflows = workflowRegistry.List()
+	}
+	m.refreshWorkflowRows()
 	m.sshInputs = newSSHInputs()
 	m.sshOutput.SetContent("SSH results will appear here.")
 	for index, feature := range m.features {
@@ -211,6 +245,48 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.sshOutput.GotoBottom()
 		m.notice = fmt.Sprintf("SSH completed: %d/%d server(s) succeeded", succeeded, len(msg.results))
 		return m, nil
+	case workflowFinishedMsg:
+		m.remoteRunning = false
+		m.cancelRemote = nil
+		m.remoteErr = msg.err
+		var output strings.Builder
+		for _, result := range msg.execution.Results {
+			label := strings.ToUpper(string(result.Status))
+			invocation := ""
+			if result.Invocation > 0 {
+				invocation = fmt.Sprintf(".%d", result.Invocation)
+			}
+			fmt.Fprintf(&output, "[%s] %s  %s%s  %s", label, result.Server, result.StepID, invocation, result.FeatureID)
+			if result.Duration > 0 {
+				fmt.Fprintf(&output, " (%s)", result.Duration.Round(time.Millisecond))
+			}
+			output.WriteByte('\n')
+			if result.Output != "" {
+				output.WriteString(result.Output)
+				if !strings.HasSuffix(result.Output, "\n") {
+					output.WriteByte('\n')
+				}
+			}
+			if result.Err != nil {
+				fmt.Fprintf(&output, "error: %v\n", result.Err)
+				m.remoteErr = errors.Join(m.remoteErr, fmt.Errorf("%s/%s: %w", result.Server, result.StepID, result.Err))
+			}
+			output.WriteByte('\n')
+		}
+		succeeded := 0
+		for _, server := range msg.execution.Servers {
+			if server.Success {
+				succeeded++
+			}
+		}
+		m.sshOutput.SetContent(strings.TrimRight(output.String(), "\n"))
+		m.sshOutput.GotoBottom()
+		if msg.err != nil {
+			m.notice = "Workflow failed: " + msg.err.Error()
+		} else {
+			m.notice = fmt.Sprintf("Workflow completed: %d/%d server(s) succeeded", succeeded, len(msg.execution.Servers))
+		}
+		return m, nil
 	case logTickMsg:
 		if m.activeOutput != nil {
 			m.logs.SetContent(m.activeOutput.String())
@@ -276,10 +352,10 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.help = true
 		return m, nil
 	case "tab":
-		m.activeTab = (m.activeTab + 1) % 4
+		m.activeTab = (m.activeTab + 1) % 5
 		return m, nil
 	case "shift+tab":
-		m.activeTab = (m.activeTab + 3) % 4
+		m.activeTab = (m.activeTab + 4) % 5
 		return m, nil
 	case "1":
 		m.activeTab = tabFeatures
@@ -293,6 +369,9 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "4":
 		m.activeTab = tabSSH
 		return m, m.focusSSH(sshHosts)
+	case "5":
+		m.activeTab = tabWorkflows
+		return m, nil
 	case "/":
 		if m.activeTab == tabFeatures && !m.running {
 			return m, m.filter.Focus()
@@ -300,6 +379,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case " ", "enter":
 		if m.activeTab == tabFeatures && !m.running {
 			m.toggleCurrent()
+		} else if m.activeTab == tabWorkflows && !m.running && !m.remoteRunning {
+			return m, m.loadCurrentWorkflow()
 		}
 		return m, nil
 	case "a":
@@ -348,6 +429,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.logs, cmd = m.logs.Update(msg)
 	} else if m.activeTab == tabSSH {
 		m.sshOutput, cmd = m.sshOutput.Update(msg)
+	} else if m.activeTab == tabWorkflows {
+		m.workflowTable, cmd = m.workflowTable.Update(msg)
 	}
 	return m, cmd
 }
@@ -374,6 +457,7 @@ func newSSHInputs() []textinput.Model {
 		{"Command  ", "uname -a", 2048},
 		{"Script   ", "./scripts/remote/create_bond_vlan.sh", 1024},
 		{"Args     ", "bond2.306 ip=10.0.36.87 prefix=24 gateway=10.0.36.254", 2048},
+		{"Config   ", "workflow-configs/prepare-setup-deploy.json", 1024},
 	}
 	inputs := make([]textinput.Model, len(definitions))
 	for index, definition := range definitions {
@@ -432,10 +516,14 @@ func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) sshFieldOrder() []int {
-	if m.sshMode == sshScript {
+	switch m.sshMode {
+	case sshScript:
 		return []int{sshHosts, sshUser, sshPassword, sshScriptPath, sshScriptArgs}
+	case sshWorkflow:
+		return []int{sshHosts, sshUser, sshPassword, sshWorkflowConfig}
+	default:
+		return []int{sshHosts, sshUser, sshPassword, sshCommandValue}
 	}
-	return []int{sshHosts, sshUser, sshPassword, sshCommandValue}
 }
 
 func (m *model) focusSSH(field int) tea.Cmd {
@@ -460,11 +548,7 @@ func (m *model) moveSSHFocus(delta int) {
 }
 
 func (m *model) toggleSSHMode() {
-	if m.sshMode == sshCommand {
-		m.sshMode = sshScript
-	} else {
-		m.sshMode = sshCommand
-	}
+	m.sshMode = (m.sshMode + 1) % 3
 	order := m.sshFieldOrder()
 	valid := false
 	for _, field := range order {
@@ -494,14 +578,58 @@ func (m *model) startRemoteRun() tea.Cmd {
 		m.notice = "SSH: user and password are required"
 		return nil
 	}
-	request := remote.Request{Timeout: remote.DefaultTimeout}
+	servers := make([]remote.Server, 0, len(addresses))
 	for _, address := range addresses {
-		request.Servers = append(request.Servers, remote.Server{Address: address, User: user, Password: password})
+		servers = append(servers, remote.Server{Address: address, User: user, Password: password})
 	}
+	knownHostsPath, err := remote.DefaultKnownHostsPath()
+	var hostKeys ssh.HostKeyCallback
+	if err == nil {
+		hostKeys, err = remote.NewTOFUHostKeyCallback(knownHostsPath)
+	}
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "SSH host keys: " + err.Error()
+		return nil
+	}
+
+	if m.sshMode == sshWorkflow {
+		if m.workflowRegistry == nil {
+			m.remoteErr = errors.New("workflow registry is not available")
+			m.notice = "Workflow registry is not available"
+			return nil
+		}
+		config, loadErr := workflow.LoadConfig(m.sshInputs[sshWorkflowConfig].Value())
+		if loadErr != nil {
+			m.remoteErr = loadErr
+			m.notice = "Workflow: " + loadErr.Error()
+			return nil
+		}
+		definition, found := m.workflowRegistry.Get(config.Workflow)
+		if !found {
+			m.remoteErr = fmt.Errorf("unknown workflow %q", config.Workflow)
+			m.notice = "Workflow: " + m.remoteErr.Error()
+			return nil
+		}
+		if err := m.workflowRegistry.ValidateConfig(definition, config); err != nil {
+			m.remoteErr = err
+			m.notice = "Workflow: " + err.Error()
+			return nil
+		}
+		m.remoteErr = nil
+		m.remoteRunning = true
+		m.notice = fmt.Sprintf("Running workflow %s on %d server(s)...", definition.ID, len(servers))
+		m.sshOutput.SetContent("Starting workflow...")
+		runContext, cancel := context.WithCancel(m.ctx)
+		m.cancelRemote = cancel
+		return tea.Batch(m.spinner.Tick, runWorkflowCmd(runContext, m.workflowRegistry, definition, config, servers, hostKeys))
+	}
+
+	request := remote.Request{Servers: servers, Timeout: remote.DefaultTimeout, HostKeys: hostKeys}
 	if m.sshMode == sshScript {
 		request.Script, err = remote.LoadScript(m.sshInputs[sshScriptPath].Value())
 		request.ScriptArgs = strings.Fields(m.sshInputs[sshScriptArgs].Value())
-	} else {
+	} else if m.sshMode == sshCommand {
 		request.Command = strings.TrimSpace(m.sshInputs[sshCommandValue].Value())
 		if request.Command == "" {
 			err = errors.New("enter a command")
@@ -510,15 +638,6 @@ func (m *model) startRemoteRun() tea.Cmd {
 	if err != nil {
 		m.remoteErr = err
 		m.notice = "SSH: " + err.Error()
-		return nil
-	}
-	knownHostsPath, err := remote.DefaultKnownHostsPath()
-	if err == nil {
-		request.HostKeys, err = remote.NewTOFUHostKeyCallback(knownHostsPath)
-	}
-	if err != nil {
-		m.remoteErr = err
-		m.notice = "SSH host keys: " + err.Error()
 		return nil
 	}
 	m.remoteErr = nil
@@ -534,6 +653,31 @@ func runRemoteCmd(ctx context.Context, request remote.Request) tea.Cmd {
 	return func() tea.Msg {
 		return remoteFinishedMsg{results: remote.Execute(ctx, request)}
 	}
+}
+
+func runWorkflowCmd(ctx context.Context, workflows *workflow.Registry, definition workflow.Definition, config workflow.Config, servers []remote.Server, hostKeys ssh.HostKeyCallback) tea.Cmd {
+	return func() tea.Msg {
+		execution, err := workflows.Execute(ctx, definition, config, servers, hostKeys)
+		return workflowFinishedMsg{execution: execution, err: err}
+	}
+}
+
+func (m *model) loadCurrentWorkflow() tea.Cmd {
+	row := m.workflowTable.SelectedRow()
+	if len(row) < 2 {
+		m.notice = "No workflow available"
+		return nil
+	}
+	id := row[1]
+	if _, found := m.workflowRegistry.Get(id); !found {
+		m.notice = "Unknown workflow: " + id
+		return nil
+	}
+	m.sshMode = sshWorkflow
+	m.sshInputs[sshWorkflowConfig].SetValue(filepath.Join("workflow-configs", id+".json"))
+	m.activeTab = tabSSH
+	m.notice = fmt.Sprintf("Workflow %s loaded; review config and press F5", id)
+	return m.focusSSH(sshWorkflowConfig)
 }
 
 func (m *model) toggleCurrent() {
@@ -653,6 +797,19 @@ func (m *model) refreshRows() {
 	m.table.SetRows(rows)
 }
 
+func (m *model) refreshWorkflowRows() {
+	rows := make([]table.Row, 0, len(m.workflows))
+	for index, definition := range m.workflows {
+		rows = append(rows, table.Row{
+			fmt.Sprintf("%d", index+1),
+			definition.ID,
+			definition.Version,
+			fmt.Sprintf("%d", len(definition.Steps)),
+		})
+	}
+	m.workflowTable.SetRows(rows)
+}
+
 func (m *model) filteredFeatures() []domain.Feature {
 	query := strings.ToLower(strings.TrimSpace(m.filter.Value()))
 	if query == "" {
@@ -710,6 +867,14 @@ func (m *model) resize(width, height int) {
 		{Title: "FEATURE", Width: max(leftWidth-43, 14)},
 		{Title: "VERSION", Width: 9},
 		{Title: "AS", Width: 6},
+	})
+	m.workflowTable.SetWidth(max(leftWidth-2, 20))
+	m.workflowTable.SetHeight(max(contentHeight-2, 3))
+	m.workflowTable.SetColumns([]table.Column{
+		{Title: "#", Width: 4},
+		{Title: "WORKFLOW", Width: max(leftWidth-27, 18)},
+		{Title: "VERSION", Width: 9},
+		{Title: "STEPS", Width: 7},
 	})
 	m.logs.Width = max(m.width-4, 20)
 	m.logs.Height = max(contentHeight-2, 3)

@@ -13,6 +13,7 @@ import (
 	"github.com/quyenhl16/script/internal/registry"
 	"github.com/quyenhl16/script/internal/runner"
 	"github.com/quyenhl16/script/internal/ui"
+	"github.com/quyenhl16/script/internal/workflow"
 )
 
 var version = "0.1.0"
@@ -36,6 +37,7 @@ func run(ctx context.Context, args []string) error {
 
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	featuresDir := flags.String("features-dir", envOrDefault("SYSSETUP_FEATURES_DIR", "features"), "directory containing feature packages")
+	workflowsDir := flags.String("workflows-dir", envOrDefault("SYSSETUP_WORKFLOWS_DIR", "workflows"), "directory containing workflow packages")
 	profilePath := flags.String("profile", "profiles/base-server.json", "profile JSON file")
 	dryRun := flags.Bool("dry-run", false, "show execution plan without changing the system")
 	logPath := flags.String("log", "syssetup.log", "execution log file")
@@ -53,13 +55,26 @@ func run(ctx context.Context, args []string) error {
 			fmt.Printf("%-20s %-8s %s\n", feature.ID, feature.Version, feature.Description)
 		}
 		return nil
+	case "workflows":
+		workflows, err := workflow.Load(filepath.Clean(*workflowsDir), reg)
+		if err != nil {
+			return err
+		}
+		for _, definition := range workflows.List() {
+			fmt.Printf("%-24s %-8s %d step(s)  %s\n", definition.ID, definition.Version, len(definition.Steps), definition.Description)
+		}
+		return nil
 	case "plan", "run", "tui":
 		profile, err := loadOptionalProfile(*profilePath, args[0] == "tui")
 		if err != nil {
 			return err
 		}
 		if args[0] == "tui" {
-			return ui.New(os.Stdin, os.Stdout).Run(ctx, reg, profile, runner.Options{DryRun: *dryRun, LogPath: *logPath, Output: os.Stdout})
+			workflows, err := workflow.Load(filepath.Clean(*workflowsDir), reg)
+			if err != nil {
+				return err
+			}
+			return ui.New(os.Stdin, os.Stdout).Run(ctx, reg, workflows, profile, runner.Options{DryRun: *dryRun, LogPath: *logPath, Output: os.Stdout})
 		}
 		resolved, err := reg.Resolve(profile)
 		if err != nil {
@@ -113,8 +128,9 @@ func usage() {
 
 Usage:
   syssetup list [--features-dir PATH]
+  syssetup workflows [--features-dir PATH] [--workflows-dir PATH]
   syssetup plan [--profile PATH]
   syssetup run  [--profile PATH] [--dry-run] [--log PATH]
-  syssetup tui  [--profile PATH] [--dry-run] [--log PATH]
+  syssetup tui  [--profile PATH] [--workflows-dir PATH] [--dry-run] [--log PATH]
   syssetup version`)
 }

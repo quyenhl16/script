@@ -1,0 +1,27 @@
+{
+  "apiVersion": "syssetup/xml-check/v1",
+  "target": "/opt/company/conf/system.xml",
+  "checks": [
+    {
+      "id": "application-data-path",
+      "xpath": "/system/paths/application",
+      "expected": "/data/app",
+      "compare": "exact",
+      "required": true
+    },
+    {
+      "id": "application-log-path",
+      "xpath": "/system/paths/log",
+      "expected": "/data/log",
+      "compare": "exact",
+      "required": true
+    },
+    {
+      "id": "vlan-gateway",
+      "xpath": "/system/network/vlan/gateway",
+      "expected": "10.0.36.254",
+      "compare": "ip",
+      "required": true
+    }
+  ]
+}

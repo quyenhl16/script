@@ -3,6 +3,7 @@ package remote
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -31,8 +32,14 @@ type Request struct {
 	Command    string
 	Script     []byte
 	ScriptArgs []string
+	Artifacts  []Artifact
 	Timeout    time.Duration
 	HostKeys   ssh.HostKeyCallback
+}
+
+type Artifact struct {
+	ID   string
+	Data []byte
 }
 
 type Result struct {
@@ -127,6 +134,17 @@ func LoadScript(path string) ([]byte, error) {
 
 func Execute(ctx context.Context, request Request) []Result {
 	results := make([]Result, len(request.Servers))
+	if len(request.Artifacts) > 0 {
+		prepared, err := prepareScript(request.Script, request.Artifacts)
+		if err != nil {
+			for index, server := range request.Servers {
+				results[index] = Result{Address: server.Address, Err: err}
+			}
+			return results
+		}
+		request.Script = prepared
+		request.Artifacts = nil
+	}
 	var group sync.WaitGroup
 	for index, server := range request.Servers {
 		group.Add(1)
@@ -137,6 +155,99 @@ func Execute(ctx context.Context, request Request) []Result {
 	}
 	group.Wait()
 	return results
+}
+
+func LoadArtifact(id, path string) (Artifact, error) {
+	if _, err := artifactEnvironmentName(id); err != nil {
+		return Artifact{}, err
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return Artifact{}, errors.New("artifact source path cannot be empty")
+	}
+	file, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return Artifact{}, fmt.Errorf("open artifact %q: %w", id, err)
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return Artifact{}, fmt.Errorf("inspect artifact %q: %w", id, err)
+	}
+	if !info.Mode().IsRegular() {
+		return Artifact{}, fmt.Errorf("artifact %q must be a regular file", id)
+	}
+	const maxArtifactSize = 10 << 20
+	data, err := io.ReadAll(io.LimitReader(file, maxArtifactSize+1))
+	if err != nil {
+		return Artifact{}, fmt.Errorf("read artifact %q: %w", id, err)
+	}
+	if len(data) > maxArtifactSize {
+		return Artifact{}, fmt.Errorf("artifact %q is larger than 10 MiB", id)
+	}
+	return Artifact{ID: id, Data: data}, nil
+}
+
+func prepareScript(script []byte, artifacts []Artifact) ([]byte, error) {
+	if len(artifacts) == 0 {
+		return script, nil
+	}
+	if len(script) == 0 {
+		return nil, errors.New("artifacts require a script")
+	}
+	const maxArtifacts = 32
+	if len(artifacts) > maxArtifacts {
+		return nil, fmt.Errorf("at most %d artifacts are allowed", maxArtifacts)
+	}
+	var payload strings.Builder
+	payload.WriteString("set -Eeuo pipefail\n")
+	payload.WriteString("command -v base64 >/dev/null 2>&1 || { echo 'Error: base64 command was not found' >&2; exit 1; }\n")
+	payload.WriteString("umask 077\n")
+	payload.WriteString("syssetup_artifact_dir=\"$(mktemp -d)\"\n")
+	payload.WriteString("trap 'rm -rf -- \"$syssetup_artifact_dir\"' EXIT\n")
+	seen := make(map[string]bool)
+	totalSize := 0
+	for index, artifact := range artifacts {
+		environmentName, err := artifactEnvironmentName(artifact.ID)
+		if err != nil {
+			return nil, err
+		}
+		if seen[environmentName] {
+			return nil, fmt.Errorf("duplicate artifact ID %q", artifact.ID)
+		}
+		seen[environmentName] = true
+		totalSize += len(artifact.Data)
+		if totalSize > 20<<20 {
+			return nil, errors.New("total artifact size is larger than 20 MiB")
+		}
+		marker := fmt.Sprintf("__SYSSETUP_ARTIFACT_%d__", index)
+		remoteName := fmt.Sprintf("artifact-%d", index)
+		fmt.Fprintf(&payload, "base64 -d >\"$syssetup_artifact_dir/%s\" <<'%s'\n", remoteName, marker)
+		payload.WriteString(base64.StdEncoding.EncodeToString(artifact.Data))
+		payload.WriteByte('\n')
+		payload.WriteString(marker)
+		payload.WriteByte('\n')
+		fmt.Fprintf(&payload, "export %s=\"$syssetup_artifact_dir/%s\"\n", environmentName, remoteName)
+	}
+	payload.WriteString("\n(\n")
+	payload.Write(script)
+	payload.WriteString("\n)\n")
+	return []byte(payload.String()), nil
+}
+
+func artifactEnvironmentName(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", errors.New("artifact ID cannot be empty")
+	}
+	for index, character := range id {
+		valid := character >= 'a' && character <= 'z' || character >= 'A' && character <= 'Z' || character >= '0' && character <= '9' || character == '_' || character == '-'
+		if !valid || index == 0 && character >= '0' && character <= '9' {
+			return "", fmt.Errorf("invalid artifact ID %q", id)
+		}
+	}
+	normalized := strings.ToUpper(strings.ReplaceAll(id, "-", "_"))
+	return "SYSSETUP_ARTIFACT_" + normalized, nil
 }
 
 func executeOne(parent context.Context, server Server, request Request) (result Result) {

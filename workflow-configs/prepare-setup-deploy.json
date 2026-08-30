@@ -1,0 +1,28 @@
+{
+  "apiVersion": "syssetup/workflow-config/v1",
+  "workflow": "prepare-setup-deploy",
+  "steps": {
+    "create-local-path": [
+      {
+        "args": [
+          "/data/app",
+          "/data/log",
+          "/opt/company/cache",
+          "mode=0755",
+          "owner=root",
+          "group=root"
+        ]
+      }
+    ],
+    "create-vlan": [
+      {
+        "args": [
+          "bond2.306",
+          "ip=10.0.36.87",
+          "prefix=24",
+          "gateway=10.0.36.254"
+        ]
+      }
+    ]
+  }
+}

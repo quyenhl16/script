@@ -34,7 +34,7 @@ package-arch:
 	rm -rf "$(STAGING_DIR)"
 	mkdir -p "$(STAGING_DIR)/bin"
 	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -o "$(STAGING_DIR)/bin/$(BINARY_NAME)" ./cmd/syssetup
-	cp -R features profiles scripts "$(STAGING_DIR)/"
+	cp -R features profiles scripts workflows workflow-configs checks "$(STAGING_DIR)/"
 	cp README.md setup.sh "$(STAGING_DIR)/"
 	chmod +x "$(STAGING_DIR)/bin/$(BINARY_NAME)" "$(STAGING_DIR)/setup.sh"
 	find "$(STAGING_DIR)/features" "$(STAGING_DIR)/scripts" -type f -name '*.sh' -exec chmod +x {} +

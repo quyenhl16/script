@@ -61,6 +61,41 @@ func TestLoadScript(t *testing.T) {
 	}
 }
 
+func TestLoadArtifactAndPrepareScript(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rules.json")
+	if err := os.WriteFile(path, []byte(`{"expected":"private-value"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	artifact, err := LoadArtifact("xml-rules", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := prepareScript([]byte("printf 'feature-script\\n'\n"), []Artifact{artifact})
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := string(prepared)
+	for _, expected := range []string{
+		"export SYSSETUP_ARTIFACT_XML_RULES=",
+		"eyJleHBlY3RlZCI6InByaXZhdGUtdmFsdWUifQ==",
+		"trap 'rm -rf -- \"$syssetup_artifact_dir\"' EXIT",
+		"printf 'feature-script\\n'",
+	} {
+		if !strings.Contains(payload, expected) {
+			t.Fatalf("prepared script does not contain %q:\n%s", expected, payload)
+		}
+	}
+	if strings.Contains(payload, "private-value") {
+		t.Fatal("artifact contents were embedded as clear text")
+	}
+}
+
+func TestLoadArtifactRejectsInvalidID(t *testing.T) {
+	if _, err := LoadArtifact("bad/id", "unused"); err == nil {
+		t.Fatal("expected invalid artifact ID error")
+	}
+}
+
 func TestExecuteValidatesWithoutConnecting(t *testing.T) {
 	results := Execute(context.Background(), Request{Servers: []Server{{Address: "localhost:22"}}})
 	if len(results) != 1 || results[0].Err == nil || !strings.Contains(results[0].Err.Error(), "user") {

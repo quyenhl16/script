@@ -1,0 +1,13 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "verify-network",
+  "name": "Verify Network Gateways",
+  "version": "1.0.0",
+  "description": "Ping a list of VLAN gateway IP addresses on remote servers",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "remoteOnly": true,
+  "remoteArgsExample": "10.0.36.254 10.0.37.254",
+  "timeoutSeconds": 120
+}

@@ -96,6 +96,11 @@ func (r *Registry) List() []domain.Feature {
 	return features
 }
 
+func (r *Registry) Get(id string) (domain.Feature, bool) {
+	feature, found := r.features[id]
+	return feature, found
+}
+
 func (r *Registry) Resolve(profile domain.Profile) ([]domain.ResolvedFeature, error) {
 	selected := make(map[string]map[string]any, len(profile.Features))
 	for _, item := range profile.Features {
