@@ -1,0 +1,38 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "load-netconf-config",
+  "name": "Load NetConf Configuration",
+  "version": "1.0.0",
+  "description": "Copy and load an XML configuration through the ConfD CLI on the active NetConf pod",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 300,
+  "parameters": {
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace containing netconf-0 and netconf-1",
+      "required": true
+    },
+    "container": {
+      "type": "string",
+      "description": "Container name when the NetConf pod has multiple containers",
+      "default": ""
+    },
+    "confd_dir": {
+      "type": "string",
+      "description": "Directory containing run_cli.sh and the XML configuration files",
+      "default": "."
+    },
+    "source_config_file": {
+      "type": "string",
+      "description": "Path to the local XML configuration file copied into the master pod",
+      "required": true
+    },
+    "destination_config_file": {
+      "type": "string",
+      "description": "XML filename created and loaded inside the ConfD directory",
+      "default": "config.xml"
+    }
+  }
+}

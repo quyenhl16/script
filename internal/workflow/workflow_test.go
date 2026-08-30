@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -106,31 +105,6 @@ func TestBundledPrepareSetupDeployWorkflow(t *testing.T) {
 	want := []Invocation{{Args: []string{"10.0.36.254"}}}
 	if !reflect.DeepEqual(verifyInvocations, want) {
 		t.Fatalf("verify-network arguments = %#v, want %#v", verifyInvocations, want)
-	}
-}
-
-func TestBundledVerifySystemXMLWorkflowLoadsArtifact(t *testing.T) {
-	features, err := registry.Load(filepath.Join("..", "..", "features"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	workflows, err := Load(filepath.Join("..", "..", "workflows"), features)
-	if err != nil {
-		t.Fatal(err)
-	}
-	definition, found := workflows.Get("verify-system-xml")
-	if !found {
-		t.Fatal("bundled verify-system-xml workflow was not found")
-	}
-	config, err := LoadConfig(filepath.Join("..", "..", "workflow-configs", "verify-system-xml.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := workflows.ValidateConfig(definition, config); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := workflows.Execute(context.Background(), definition, config, nil, nil); err != nil {
-		t.Fatalf("workflow could not load its local rules artifact: %v", err)
 	}
 }
 

@@ -1,0 +1,14 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "verify-xml-config",
+  "description": "Verify important values in a local XML configuration file",
+  "features": [
+    {
+      "id": "verify-xml-config",
+      "parameters": {
+        "xml_file": "/path/to/system.xml",
+        "rules_file": "checks/xml/system-critical-paths.json"
+      }
+    }
+  ]
+}

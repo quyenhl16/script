@@ -6,63 +6,21 @@ fail() {
   exit 2
 }
 
-usage() {
-  cat <<'EOF'
-Usage:
-  run.sh --rules <remote-rules.json> [--xml <remote-config.xml>]
-  run.sh --rules-artifact <artifact-id> [--xml <remote-config.xml>]
+action="${1:-}"
+xml_file="${SYSSETUP_PARAM_XML_FILE:-}"
+rules_file="${SYSSETUP_PARAM_RULES_FILE:-checks/xml/system-critical-paths.json}"
 
-The XML path is read from rules.target unless --xml is supplied.
-EOF
+preflight() {
+  [[ -n "$xml_file" ]] || fail "xml_file parameter is required"
+  [[ -f "$xml_file" && -r "$xml_file" ]] || fail "XML file is not a readable regular file: $xml_file"
+  [[ -n "$rules_file" ]] || fail "rules_file parameter is required"
+  [[ -f "$rules_file" && -r "$rules_file" ]] || fail "rules file is not a readable regular file: $rules_file"
+  command -v python3 >/dev/null 2>&1 || fail "python3 command was not found"
+  command -v xmllint >/dev/null 2>&1 || fail "xmllint command was not found; install libxml2"
 }
 
-rules_file=""
-xml_override=""
-
-while (( $# > 0 )); do
-  case "$1" in
-    --rules)
-      (( $# >= 2 )) || fail "--rules requires a path"
-      [[ -z "$rules_file" ]] || fail "choose only one rules source"
-      rules_file="$2"
-      shift 2
-      ;;
-    --rules-artifact)
-      (( $# >= 2 )) || fail "--rules-artifact requires an artifact ID"
-      [[ -z "$rules_file" ]] || fail "choose only one rules source"
-      artifact_id="$2"
-      [[ "$artifact_id" =~ ^[A-Za-z_][A-Za-z0-9_-]*$ ]] || fail "invalid artifact ID: $artifact_id"
-      environment_name="SYSSETUP_ARTIFACT_${artifact_id^^}"
-      environment_name="${environment_name//-/_}"
-      rules_file="${!environment_name:-}"
-      [[ -n "$rules_file" ]] || fail "artifact $artifact_id was not supplied by the workflow"
-      shift 2
-      ;;
-    --xml)
-      (( $# >= 2 )) || fail "--xml requires a path"
-      [[ -z "$xml_override" ]] || fail "--xml may only be supplied once"
-      xml_override="$2"
-      shift 2
-      ;;
-    -h|--help)
-      usage
-      exit 0
-      ;;
-    *)
-      fail "unsupported argument: $1"
-      ;;
-  esac
-done
-
-[[ -n "$rules_file" ]] || {
-  usage >&2
-  fail "--rules or --rules-artifact is required"
-}
-[[ -f "$rules_file" && -r "$rules_file" ]] || fail "rules file is not a readable regular file: $rules_file"
-command -v python3 >/dev/null 2>&1 || fail "python3 command was not found"
-command -v xmllint >/dev/null 2>&1 || fail "xmllint command was not found; install libxml2"
-
-python3 - "$rules_file" "$xml_override" <<'PY'
+verify_config() {
+python3 - "$rules_file" "$xml_file" <<'PY'
 import ipaddress
 import json
 import os
@@ -158,11 +116,9 @@ def display(value, sensitive):
 
 def main():
     rules, checks = read_rules(sys.argv[1])
-    xml_path = sys.argv[2].strip() or str(rules.get("target", "")).strip()
+    xml_path = sys.argv[2].strip()
     if not xml_path:
-        raise InputError("rules.target or --xml is required")
-    if not os.path.isabs(xml_path):
-        raise InputError(f"XML target must be an absolute path: {xml_path}")
+        raise InputError("XML file path is required")
     if not os.path.isfile(xml_path) or not os.access(xml_path, os.R_OK):
         raise InputError(f"XML target is not a readable regular file: {xml_path}")
     if os.path.getsize(xml_path) > MAX_INPUT_SIZE:
@@ -239,3 +195,26 @@ except InputError as error:
     print(f"Error: {error}", file=sys.stderr)
     sys.exit(2)
 PY
+}
+
+case "$action" in
+  check)
+    preflight
+    # Verification is read-only but must run on every invocation.
+    exit 10
+    ;;
+  apply)
+    :
+    ;;
+  verify)
+    preflight
+    verify_config
+    ;;
+  rollback)
+    :
+    ;;
+  *)
+    printf 'Usage: %s {check|apply|verify|rollback}\n' "$0" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,17 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "load-netconf-config",
+  "description": "Load XML configuration on the active NetConf pod",
+  "features": [
+    {
+      "id": "load-netconf-config",
+      "parameters": {
+        "namespace": "your-namespace",
+        "container": "",
+        "confd_dir": ".",
+        "source_config_file": "/path/to/config.xml",
+        "destination_config_file": "config.xml"
+      }
+    }
+  ]
+}

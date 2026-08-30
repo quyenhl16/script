@@ -136,21 +136,82 @@ nhập. Chọn feature trong tab `Features`, nhập thông tin SSH rồi cấu h
 định lần lượt là `0755`, `root`, `root`. Script từ chối `/`, thành phần `.`/`..`,
 đường dẫn đang là file và user/group không tồn tại.
 
-### Kiểm tra XML config qua SSH
+### Load XML config vào NetConf pod master
 
-Feature `verify-xml-config` đọc một bộ rule JSON và so sánh các giá trị quan
-trọng trong XML trên từng server. Cách dùng khuyến nghị là mở tab `5 Workflows`,
-chọn `verify-system-xml`, nhấn `Enter`, nhập server/user/password rồi nhấn `F5`.
-Workflow tự gửi file `checks/xml/system-critical-paths.json` tới một thư mục tạm
-trên server, chạy kiểm tra và xóa file tạm khi hoàn tất.
+Feature `load-netconf-config` chạy local bằng `kubectl`; không dùng SSH và không
+nằm trong workflow. Feature kiểm tra lần lượt `netconf-0` và `netconf-1` trong
+namespace đã cấu hình bằng lệnh `show confd-state ha`, sau đó chỉ thực hiện load
+trên pod duy nhất trả về `confd-state ha mode master`. Nếu không có master hoặc
+cả hai pod cùng báo master, feature dừng mà không load cấu hình.
 
-Trước khi chạy, sửa `target`, `xpath` và `expected` trong file rule mẫu cho đúng
-với hệ thống thực tế:
+Sửa namespace và các đường dẫn nếu cần trong
+`profiles/load-netconf-config.json`:
+
+```json
+{
+  "id": "load-netconf-config",
+  "parameters": {
+    "namespace": "your-namespace",
+    "container": "",
+    "confd_dir": ".",
+    "source_config_file": "/path/to/config.xml",
+    "destination_config_file": "config.xml"
+  }
+}
+```
+
+Sau đó chạy:
+
+```bash
+./bin/syssetup plan --profile profiles/load-netconf-config.json
+./bin/syssetup run --profile profiles/load-netconf-config.json
+```
+
+Sau khi xác định master, feature copy file local `source_config_file` qua stdin
+của `kubectl exec` vào file tạm, rồi đổi tên nguyên tử thành
+`destination_config_file` trong pod master. Pod slave không nhận file. Feature
+sau đó mở `./run_cli.sh` ở chế độ non-interactive, chạy `config`, `load merge`
+với tên file trong `destination_config_file`, rồi `commit`. CLI dừng ngay khi gặp lỗi. Nếu transaction
+load/commit lần đầu thất bại, toàn bộ transaction được chạy lại một lần; sau hai
+lần lỗi feature trả trạng thái failed.
+
+Máy chạy `syssetup` cần có `kubectl` và quyền `get pod`, `pods/exec` trong
+namespace. Nếu pod có nhiều container, đặt `container` thành tên container chạy
+ConfD. `confd_dir` mặc định là working directory của container; nếu `run_cli.sh`
+nằm ở chỗ khác, đặt tham số này thành đường dẫn thư mục đó.
+
+### Kiểm tra XML config local
+
+Feature `verify-xml-config` chỉ đọc một file XML local và so sánh các path quan
+trọng với bộ rule JSON. Feature này chạy qua luồng local `Features -> Plan -> Run`,
+không dùng SSH và không nằm trong workflow.
+
+Sửa `xml_file` trong profile mẫu `profiles/verify-xml-config.json` thành file XML
+cần kiểm tra. `rules_file` mặc định trỏ tới
+`checks/xml/system-critical-paths.json` và có thể đổi sang file rule khác:
+
+```json
+{
+  "id": "verify-xml-config",
+  "parameters": {
+    "xml_file": "/opt/company/conf/system.xml",
+    "rules_file": "checks/xml/system-critical-paths.json"
+  }
+}
+```
+
+Sau đó chạy:
+
+```bash
+./bin/syssetup plan --profile profiles/verify-xml-config.json
+./bin/syssetup run --profile profiles/verify-xml-config.json
+```
+
+Mỗi rule khai báo XPath và giá trị mong đợi:
 
 ```json
 {
   "apiVersion": "syssetup/xml-check/v1",
-  "target": "/opt/company/conf/system.xml",
   "checks": [
     {
       "id": "application-data-path",
@@ -170,15 +231,9 @@ là `true`, ngược lại được ghi `[SKIP]`. Đặt `sensitive: true` để
 mong đợi và value thực tế ra log. Với XML có namespace, XPath có thể dùng
 `local-name()`, ví dụ `/*[local-name()='system']/*[local-name()='paths']`.
 
-Có thể chạy feature trực tiếp nếu file rule đã có sẵn trên server, với `Args`:
-
-```text
---rules /etc/syssetup/system-critical-paths.json
-```
-
-Dùng thêm `--xml /path/khac/system.xml` để ghi đè `target` trong rule. Server
-đích cần có `python3` và `xmllint` (gói `libxml2`). Feature chỉ đọc cấu hình,
-không sửa XML; đường dẫn XML bắt buộc là đường dẫn tuyệt đối.
+Máy chạy `syssetup` cần có `python3` và `xmllint` (gói `libxml2`). Cả hai đường
+dẫn có thể là tuyệt đối hoặc tương đối với thư mục hiện tại. Feature chỉ đọc và
+kiểm tra nội dung, không sửa file XML.
 
 Khi build từ source cần Go 1.24 trở lên. Binary đã build vẫn có thể chạy độc lập trên server đích.
 

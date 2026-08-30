@@ -3,11 +3,21 @@
   "id": "verify-xml-config",
   "name": "Verify XML Configuration",
   "version": "1.0.0",
-  "description": "Validate important XML values against a declarative JSON rule set on remote servers",
+  "description": "Validate a local XML file against a declarative JSON rule set",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
-  "remoteOnly": true,
-  "remoteArgsExample": "--rules /etc/syssetup/system-critical-paths.json",
-  "timeoutSeconds": 120
+  "timeoutSeconds": 120,
+  "parameters": {
+    "xml_file": {
+      "type": "string",
+      "description": "Path to the local XML file to verify",
+      "required": true
+    },
+    "rules_file": {
+      "type": "string",
+      "description": "Path to the local JSON rule file",
+      "default": "checks/xml/system-critical-paths.json"
+    }
+  }
 }

@@ -1,6 +1,5 @@
 {
   "apiVersion": "syssetup/xml-check/v1",
-  "target": "/opt/company/conf/system.xml",
   "checks": [
     {
       "id": "application-data-path",

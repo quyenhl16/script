@@ -99,6 +99,62 @@ func TestResolveRejectsRemoteOnlyFeature(t *testing.T) {
 	}
 }
 
+func TestBundledVerifyXMLConfigIsLocal(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := registry.Resolve(domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "verify-xml",
+		Features: []domain.FeatureSelection{{
+			ID: "verify-xml-config",
+			Parameters: map[string]any{
+				"xml_file": "/tmp/system.xml",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 1 || resolved[0].Feature.RemoteOnly {
+		t.Fatalf("verify-xml-config must resolve as a local feature: %#v", resolved)
+	}
+	if got := resolved[0].Parameters["rules_file"]; got != "checks/xml/system-critical-paths.json" {
+		t.Fatalf("rules_file default = %#v", got)
+	}
+}
+
+func TestBundledLoadNetConfConfigIsLocal(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := registry.Resolve(domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "load-netconf",
+		Features: []domain.FeatureSelection{{
+			ID: "load-netconf-config",
+			Parameters: map[string]any{
+				"namespace":          "test-ns",
+				"source_config_file": "/tmp/config.xml",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 1 || resolved[0].Feature.RemoteOnly {
+		t.Fatalf("load-netconf-config must resolve as a local feature: %#v", resolved)
+	}
+	if got := resolved[0].Parameters["destination_config_file"]; got != "config.xml" {
+		t.Fatalf("destination_config_file default = %#v", got)
+	}
+	if got := resolved[0].Parameters["confd_dir"]; got != "." {
+		t.Fatalf("confd_dir default = %#v", got)
+	}
+}
+
 func writeFeature(t *testing.T, root, id, manifest string) {
 	t.Helper()
 	directory := filepath.Join(root, id)
