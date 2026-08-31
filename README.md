@@ -55,7 +55,9 @@ sudo ./setup.sh tui
 TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
 
 - `Features`: bảng feature được đánh số và sắp xếp alphabet theo ID, cùng trạng
-  thái, version, quyền thực thi và panel chi tiết. Index vẫn giữ nguyên khi lọc.
+  thái, version, quyền thực thi và panel chi tiết. Panel liệt kê parameter
+  required/optional, kiểu dữ liệu, mô tả, default và giá trị từ profile; parameter
+  bắt buộc còn thiếu được đánh dấu `MISSING`. Index vẫn giữ nguyên khi lọc.
 - `Plan`: thứ tự thực thi sau khi resolve dependency.
 - `Logs`: output cập nhật trong lúc runner hoạt động.
 - `Remote SSH`: nhập danh sách server, user, password để chạy Linux command
@@ -74,6 +76,7 @@ Phím tắt:
 | `Space`, `Enter` | Chọn hoặc bỏ chọn feature |
 | `/` | Lọc feature |
 | `a`, `n` | Chọn tất cả feature đang hiển thị hoặc bỏ chọn tất cả |
+| `PgUp`, `PgDn` | Cuộn nội dung parameter trong panel chi tiết feature |
 | `1/2/3/4/5/6`, `Tab` | Chuyển Features, Plan, Logs, Remote SSH, Workflows và Profiles |
 | `r` | Chạy execution plan |
 | `c` | Hủy plan đang chạy |
@@ -262,7 +265,8 @@ Node không tồn tại sẽ là lỗi nếu `required` là `true`, ngược l�
 log. Với XML có namespace, XPath có thể dùng `local-name()` như các rule AMF
 trong `checks/xml/system-critical-paths.json`.
 
-Máy chạy `syssetup` cần có `python3` và `xmllint` (gói `libxml2`). Cả hai đường
+Máy chạy `syssetup` cần có Python 3.6 trở lên (`python3`) và `xmllint` (gói
+`libxml2`). Cả hai đường
 dẫn có thể là tuyệt đối hoặc tương đối với thư mục hiện tại. Feature chỉ đọc và
 kiểm tra nội dung, không sửa file XML.
 

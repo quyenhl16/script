@@ -89,6 +89,7 @@ type model struct {
 	workflowTable table.Model
 	profileTable  table.Model
 	filter        textinput.Model
+	featureDetail viewport.Model
 	logs          viewport.Model
 	sshOutput     viewport.Model
 	spinner       spinner.Model
@@ -162,12 +163,13 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 				{Title: "AS", Width: 6},
 			}),
 		),
-		filter:    filter,
-		logs:      viewport.New(0, 0),
-		sshOutput: viewport.New(0, 0),
-		spinner:   spin,
-		notice:    "Ready",
-		sshFocus:  -1,
+		filter:        filter,
+		featureDetail: viewport.New(0, 0),
+		logs:          viewport.New(0, 0),
+		sshOutput:     viewport.New(0, 0),
+		spinner:       spin,
+		notice:        "Ready",
+		sshFocus:      -1,
 	}
 	m.workflowTable = table.New(
 		table.WithFocused(true),
@@ -451,11 +453,21 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.startRemoteRun()
 		}
 		return m, nil
+	case "pgup", "pgdown", "ctrl+u", "ctrl+d":
+		if m.activeTab == tabFeatures {
+			var cmd tea.Cmd
+			m.featureDetail, cmd = m.featureDetail.Update(msg)
+			return m, cmd
+		}
 	}
 
 	var cmd tea.Cmd
 	if m.activeTab == tabFeatures {
+		previousID := m.currentFeatureID()
 		m.table, cmd = m.table.Update(msg)
+		if previousID != m.currentFeatureID() {
+			m.refreshFeatureDetail(true)
+		}
 	} else if m.activeTab == tabLogs {
 		m.logs, cmd = m.logs.Update(msg)
 	} else if m.activeTab == tabSSH {
@@ -835,6 +847,7 @@ func logTickCmd() tea.Cmd {
 }
 
 func (m *model) refreshRows() {
+	previousID := m.currentFeatureID()
 	rows := make([]table.Row, 0, len(m.features))
 	for _, feature := range m.filteredFeatures() {
 		selected := "[ ]"
@@ -852,6 +865,7 @@ func (m *model) refreshRows() {
 		rows = append(rows, table.Row{selected, index, m.statusLabel(feature.ID), feature.ID, feature.Version, root})
 	}
 	m.table.SetRows(rows)
+	m.refreshFeatureDetail(previousID != m.currentFeatureID())
 }
 
 func (m *model) refreshWorkflowRows() {
@@ -952,6 +966,10 @@ func (m *model) resize(width, height int) {
 		{Title: "PROFILE", Width: max(leftWidth-18, 18)},
 		{Title: "FEATURES", Width: 10},
 	})
+	rightWidth := m.width - leftWidth - 1
+	m.featureDetail.Width = max(rightWidth-4, 10)
+	m.featureDetail.Height = max(contentHeight-2, 3)
+	m.refreshFeatureDetail(false)
 	m.logs.Width = max(m.width-4, 20)
 	m.logs.Height = max(contentHeight-2, 3)
 	m.sshOutput.Width = max(m.width/2-6, 20)

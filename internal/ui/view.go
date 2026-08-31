@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -223,15 +224,26 @@ func (m *model) featuresView(height int) string {
 		return left
 	}
 	rightWidth := m.width - leftWidth - 1
-	detail := panelStyle.Width(max(rightWidth-2, 20)).Height(max(height-2, 2)).Render(m.detailView(rightWidth - 4))
+	detail := panelStyle.Width(max(rightWidth-2, 20)).Height(max(height-2, 2)).Render(m.featureDetail.View())
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, " ", detail)
 }
 
-func (m *model) detailView(width int) string {
+func (m *model) refreshFeatureDetail(reset bool) {
 	feature, found := m.currentFeature()
 	if !found {
-		return mutedStyle.Render("No feature selected")
+		m.featureDetail.SetContent(mutedStyle.Render("No feature selected"))
+		if reset {
+			m.featureDetail.GotoTop()
+		}
+		return
 	}
+	m.featureDetail.SetContent(m.featureDetailContent(feature, max(m.featureDetail.Width, 10)))
+	if reset {
+		m.featureDetail.GotoTop()
+	}
+}
+
+func (m *model) featureDetailContent(feature domain.Feature, width int) string {
 	dependencies := "none"
 	if len(feature.DependsOn) > 0 {
 		dependencies = strings.Join(feature.DependsOn, ", ")
@@ -256,8 +268,73 @@ func (m *model) detailView(width int) string {
 		"",
 		keyStyle.Render("Supported OS"),
 		valueStyle.Render(osList),
+		"",
 	}
+	rows = append(rows, m.parameterDetails(feature)...)
+	rows = append(rows, "", mutedStyle.Render("PgUp/PgDn scroll details"))
 	return lipgloss.NewStyle().Width(max(width, 10)).Render(strings.Join(rows, "\n"))
+}
+
+func (m *model) parameterDetails(feature domain.Feature) []string {
+	requiredCount := 0
+	for _, parameter := range feature.Parameters {
+		if parameter.Required {
+			requiredCount++
+		}
+	}
+	optionalCount := len(feature.Parameters) - requiredCount
+	lines := []string{
+		keyStyle.Render(fmt.Sprintf("Parameters (%d required, %d optional)", requiredCount, optionalCount)),
+	}
+	if len(feature.Parameters) == 0 {
+		return append(lines, mutedStyle.Render("none"))
+	}
+	lines = append(lines, mutedStyle.Render(`Configure under this feature's "parameters" object in the profile.`), "")
+
+	names := make([]string, 0, len(feature.Parameters))
+	for name := range feature.Parameters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	configured := m.profileParameters[feature.ID]
+	for index, name := range names {
+		parameter := feature.Parameters[name]
+		requirement := mutedStyle.Render("optional")
+		if parameter.Required {
+			requirement = errorStyle.Render("required")
+		}
+		lines = append(lines, valueStyle.Render(name)+"  "+requirement+mutedStyle.Render(" - "+parameter.Type))
+		if parameter.Description != "" {
+			lines = append(lines, mutedStyle.Render("  "+parameter.Description))
+		}
+		if value, exists := configured[name]; exists {
+			lines = append(lines, contextStyle.Render("  profile: ")+valueStyle.Render(formatParameterValue(name, value)))
+		} else if parameter.Required {
+			lines = append(lines, errorStyle.Render("  profile: MISSING - add this parameter"))
+		} else if parameter.Default != nil {
+			lines = append(lines, mutedStyle.Render("  default: ")+valueStyle.Render(formatParameterValue(name, parameter.Default)))
+		} else {
+			lines = append(lines, mutedStyle.Render("  profile: not set"))
+		}
+		if index < len(names)-1 {
+			lines = append(lines, "")
+		}
+	}
+	return lines
+}
+
+func formatParameterValue(name string, value any) string {
+	normalized := strings.ToLower(name)
+	for _, marker := range []string{"password", "secret", "token", "private_key"} {
+		if strings.Contains(normalized, marker) {
+			return "<configured>"
+		}
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Sprint(value)
+	}
+	return string(encoded)
 }
 
 func (m *model) planView(height int) string {
@@ -317,6 +394,7 @@ func (m *model) footerView() string {
 	}
 	items := []string{
 		keyStyle.Render("j/k") + " move",
+		keyStyle.Render("pgup/pgdn") + " details",
 		keyStyle.Render("space") + " select",
 		keyStyle.Render("/") + " filter",
 		keyStyle.Render("r") + " run",
@@ -325,7 +403,7 @@ func (m *model) footerView() string {
 		keyStyle.Render("q") + " quit",
 	}
 	if m.running {
-		items[3] = keyStyle.Render("c") + " cancel"
+		items[4] = keyStyle.Render("c") + " cancel"
 	}
 	return strings.Join(items, "  ")
 }
@@ -338,6 +416,7 @@ func (m *model) helpView() string {
 		keyStyle.Render("space / enter") + "   Toggle selected feature",
 		keyStyle.Render("a / n") + "           Select all visible / select none",
 		keyStyle.Render("/") + "               Filter features",
+		keyStyle.Render("PgUp / PgDn") + "     Scroll feature parameters",
 		keyStyle.Render("1 / 2 / 3") + "       Features / Plan / Logs",
 		keyStyle.Render("4") + "               Remote SSH form",
 		keyStyle.Render("5") + "               Workflows",
@@ -364,6 +443,14 @@ func (m *model) currentFeature() (domain.Feature, bool) {
 		}
 	}
 	return domain.Feature{}, false
+}
+
+func (m *model) currentFeatureID() string {
+	feature, found := m.currentFeature()
+	if !found {
+		return ""
+	}
+	return feature.ID
 }
 
 func (m *model) currentWorkflow() (workflow.Definition, bool) {

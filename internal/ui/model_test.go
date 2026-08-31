@@ -69,6 +69,40 @@ func TestDashboardViewAndDryRun(t *testing.T) {
 	}
 }
 
+func TestFeatureDetailShowsRequiredOptionalAndProfileParameters(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "configured", `,"parameters":{
+		"namespace":{"type":"string","description":"Kubernetes namespace","required":true},
+		"container":{"type":"string","description":"Optional container","default":""},
+		"source_file":{"type":"string","description":"Local source file","required":true}
+	}`)
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile := domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "test",
+		Features: []domain.FeatureSelection{{
+			ID:         "configured",
+			Parameters: map[string]any{"namespace": "pramf01"},
+		}},
+	}
+	m := newModel(context.Background(), reg, profile, runner.Options{DryRun: true})
+	m.resize(140, 45)
+	view := m.View()
+	for _, expected := range []string{
+		"Parameters (2 required, 1 optional)",
+		"namespace", "required", `profile: "pramf01"`,
+		"container", "optional", `default: ""`,
+		"source_file", "MISSING", "PgUp/PgDn",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("feature detail does not contain %q: %s", expected, view)
+		}
+	}
+}
+
 func TestSSHFormMasksPasswordAndSwitchesMode(t *testing.T) {
 	root := t.TempDir()
 	writeDashboardFeature(t, root, "base", "")

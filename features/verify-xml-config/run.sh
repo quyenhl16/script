@@ -63,7 +63,13 @@ def run_xmllint(xml_path, expression=None):
         command.extend(["--noout", xml_path])
     else:
         command.extend(["--xpath", expression, xml_path])
-    return subprocess.run(command, text=True, capture_output=True, check=False)
+    return subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        universal_newlines=True,
+        check=False,
+    )
 
 
 def selected_node_count(xml_path, xpath):

@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "verify-xml-config",
   "name": "Verify XML Configuration",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Validate a local XML file against a declarative JSON rule set",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
