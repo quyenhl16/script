@@ -108,7 +108,9 @@ hệ thống và chứa `base-server.json` cùng các profile feature của hệ
 profiles/
 └── 01HTX/
     ├── base-server.json
+    ├── compare-xml-config.json
     ├── pramf01-connectivity.json
+    ├── update-alarm-mappings.json
     └── verify-xml-config.json
 ```
 
@@ -305,10 +307,88 @@ Node không tồn tại sẽ là lỗi nếu `required` là `true`, ngược l�
 log. Với XML có namespace, XPath có thể dùng `local-name()` như các rule AMF
 trong `checks/xml/system-critical-paths.json`.
 
-Máy chạy `syssetup` cần có Python 3.6 trở lên (`python3`) và `xmllint` (gói
-`libxml2`). Cả hai đường
+Feature `verify-xml-config` cần Python 3.6 trở lên (`python3`) và `xmllint` (gói
+`libxml2`). Các đường
 dẫn có thể là tuyệt đối hoặc tương đối với thư mục hiện tại. Feature chỉ đọc và
 kiểm tra nội dung, không sửa file XML.
+
+### So sánh hai XML config
+
+Feature `compare-xml-config` so sánh hai file XML theo toàn bộ leaf path, bỏ qua
+khác biệt về indentation và namespace prefix. Với list lặp, feature ưu tiên các
+leaf key `id`, `name`, `no`, `key`; nếu không có key ổn định mới dùng chỉ số
+`[1]`, `[2]`. Vì vậy việc đổi thứ tự list có key không tạo ra hàng loạt sai khác giả.
+
+Sửa hai đường dẫn trong `profiles/01HTX/compare-xml-config.json` rồi chạy:
+
+```bash
+./bin/syssetup run --profile profiles/01HTX/compare-xml-config.json
+```
+
+Các tham số:
+
+```json
+{
+  "id": "compare-xml-config",
+  "parameters": {
+    "source_xml": "/opt/company/conf/config-old.xml",
+    "target_xml": "/opt/company/conf/config-new.xml",
+    "rules_file": "checks/xml/system-critical-paths.json",
+    "show_equal": false
+  }
+}
+```
+
+`total_paths` là hợp của path trong hai file. `different` gồm path đổi giá trị,
+chỉ có ở source hoặc chỉ có ở target. Mặc định output hiển thị mọi sai khác và
+mọi path critical; đặt `show_equal: true` để hiển thị cả path thường giống nhau.
+Các path nằm dưới XPath khai báo trong `system-critical-paths.json` có nhãn
+`[CRITICAL:<id>]` nổi bật:
+
+```text
+[FAIL] Summary: total_paths=445 same=440 different=5 changed=3 only_source=1 only_target=1
+[FAIL] Critical summary: rules=7 matched_rules=7 total_paths=74 same=72 different=2
+[FAIL] [CRITICAL:amf-default-nrf-uri] [CHANGED] /config/amf/mm_service/nf_conf/default_nrf_uri
+  source='http://10.0.0.1:20000'
+  target='http://10.0.0.2:20000'
+```
+
+Nếu có sai khác hoặc thiếu một critical rule bắt buộc, feature trả trạng thái
+failed và report Markdown/HTML vẫn được tạo đầy đủ. Feature chỉ cần `python3`,
+không yêu cầu `xmllint`.
+
+### Cập nhật AMF alarm mappings
+
+Feature `update-alarm-mappings` gửi tuần tự các payload alarm qua HTTP `PUT`.
+15 nhóm payload từ `sctp` đến `dns` được lưu tại
+`features/update-alarm-mappings/alarm-mappings.json`, tách khỏi script để có thể
+sửa hoặc bổ sung mà không phải tạo lại lệnh shell.
+
+Kiểm tra `endpoint` trong profile trước khi chạy:
+
+```bash
+./bin/syssetup run --profile profiles/01HTX/update-alarm-mappings.json
+```
+
+Profile hỗ trợ các tham số:
+
+```json
+{
+  "id": "update-alarm-mappings",
+  "parameters": {
+    "endpoint": "http://10.0.1.101:33334/nnm-service/v1/updatealarm/AMF",
+    "requests_file": "/opt/company/conf/alarm-mappings.json",
+    "connect_timeout_seconds": 5,
+    "request_timeout_seconds": 30
+  }
+}
+```
+
+`requests_file` là tùy chọn; nếu bỏ qua, feature dùng file đi kèm nói trên.
+Mỗi request hiển thị tên pod, HTTP status và response body. Feature tiếp tục gửi
+các request còn lại khi một request lỗi, sau đó in tổng số `passed`/`failed` và
+trả trạng thái failed nếu có bất kỳ lỗi curl hoặc HTTP ngoài khoảng 2xx. Toàn bộ
+kết quả cũng được lưu trong report Markdown/HTML của lần chạy.
 
 Khi build từ source cần Go 1.24 trở lên. Binary đã build vẫn có thể chạy độc lập trên server đích.
 

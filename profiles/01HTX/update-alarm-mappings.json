@@ -1,0 +1,15 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "update-alarm-mappings",
+  "description": "Update the AMF alarm mappings for system 01HTX",
+  "features": [
+    {
+      "id": "update-alarm-mappings",
+      "parameters": {
+        "endpoint": "http://10.0.1.101:33334/nnm-service/v1/updatealarm/AMF",
+        "connect_timeout_seconds": 5,
+        "request_timeout_seconds": 30
+      }
+    }
+  ]
+}

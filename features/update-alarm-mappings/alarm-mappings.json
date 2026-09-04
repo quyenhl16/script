@@ -1,0 +1,155 @@
+{
+  "apiVersion": "syssetup/alarm-mappings/v1",
+  "requests": [
+    {
+      "name": "sctp",
+      "payload": [
+        {"PodPhase": "1", "PodName": "sctp", "AlarmId": 1000205},
+        {"PodPhase": "2", "PodName": "sctp", "AlarmId": 1000203},
+        {"PodPhase": "3", "PodName": "sctp", "AlarmId": 1000207},
+        {"PodPhase": "4", "PodName": "sctp", "AlarmId": 1000204},
+        {"PodPhase": "5", "PodName": "sctp", "AlarmId": 1000208}
+      ]
+    },
+    {
+      "name": "comm",
+      "payload": [
+        {"PodPhase": "1", "PodName": "comm", "AlarmId": 1003204},
+        {"PodPhase": "2", "PodName": "comm", "AlarmId": 1003202},
+        {"PodPhase": "3", "PodName": "comm", "AlarmId": 1003206},
+        {"PodPhase": "4", "PodName": "comm", "AlarmId": 1003203},
+        {"PodPhase": "5", "PodName": "comm", "AlarmId": 1003207}
+      ]
+    },
+    {
+      "name": "mm-controller",
+      "payload": [
+        {"PodPhase": "1", "PodName": "mm-controller", "AlarmId": 1004204},
+        {"PodPhase": "2", "PodName": "mm-controller", "AlarmId": 1004202},
+        {"PodPhase": "3", "PodName": "mm-controller", "AlarmId": 1004206},
+        {"PodPhase": "4", "PodName": "mm-controller", "AlarmId": 1004203},
+        {"PodPhase": "5", "PodName": "mm-controller", "AlarmId": 1004207}
+      ]
+    },
+    {
+      "name": "mm",
+      "payload": [
+        {"PodPhase": "1", "PodName": "mm", "AlarmId": 1002204},
+        {"PodPhase": "2", "PodName": "mm", "AlarmId": 1002202},
+        {"PodPhase": "3", "PodName": "mm", "AlarmId": 1002206},
+        {"PodPhase": "4", "PodName": "mm", "AlarmId": 1002203},
+        {"PodPhase": "5", "PodName": "mm", "AlarmId": 1002207}
+      ]
+    },
+    {
+      "name": "netconf1",
+      "payload": [
+        {"PodPhase": "1", "PodName": "netconf1", "AlarmId": 1007103},
+        {"PodPhase": "2", "PodName": "netconf1", "AlarmId": 1007101},
+        {"PodPhase": "3", "PodName": "netconf1", "AlarmId": 1007104},
+        {"PodPhase": "4", "PodName": "netconf1", "AlarmId": 1007102},
+        {"PodPhase": "5", "PodName": "netconf1", "AlarmId": 1007105}
+      ]
+    },
+    {
+      "name": "netconf2",
+      "payload": [
+        {"PodPhase": "1", "PodName": "netconf2", "AlarmId": 1007203},
+        {"PodPhase": "2", "PodName": "netconf2", "AlarmId": 1007201},
+        {"PodPhase": "3", "PodName": "netconf2", "AlarmId": 1007204},
+        {"PodPhase": "4", "PodName": "netconf2", "AlarmId": 1007202},
+        {"PodPhase": "5", "PodName": "netconf2", "AlarmId": 1007205}
+      ]
+    },
+    {
+      "name": "nm",
+      "payload": [
+        {"PodPhase": "1", "PodName": "nm", "AlarmId": 1008205},
+        {"PodPhase": "2", "PodName": "nm", "AlarmId": 1008203},
+        {"PodPhase": "3", "PodName": "nm", "AlarmId": 1008206},
+        {"PodPhase": "4", "PodName": "nm", "AlarmId": 1008204},
+        {"PodPhase": "5", "PodName": "nm", "AlarmId": 1008207}
+      ]
+    },
+    {
+      "name": "aerospike",
+      "payload": [
+        {"PodPhase": "1", "PodName": "aerospike", "AlarmId": 1005207},
+        {"PodPhase": "2", "PodName": "aerospike", "AlarmId": 1005205},
+        {"PodPhase": "3", "PodName": "aerospike", "AlarmId": 1005206},
+        {"PodPhase": "4", "PodName": "aerospike", "AlarmId": 1005209},
+        {"PodPhase": "5", "PodName": "aerospike", "AlarmId": 1005210}
+      ]
+    },
+    {
+      "name": "nm-postgres",
+      "payload": [
+        {"PodPhase": "1", "PodName": "nm-postgres", "AlarmId": 1008215},
+        {"PodPhase": "2", "PodName": "nm-postgres", "AlarmId": 1008213},
+        {"PodPhase": "3", "PodName": "nm-postgres", "AlarmId": 1008216},
+        {"PodPhase": "4", "PodName": "nm-postgres", "AlarmId": 1008214},
+        {"PodPhase": "5", "PodName": "nm-postgres", "AlarmId": 1008217}
+      ]
+    },
+    {
+      "name": "redis",
+      "payload": [
+        {"PodPhase": "1", "PodName": "redis", "AlarmId": 1009203},
+        {"PodPhase": "2", "PodName": "redis", "AlarmId": 1009201},
+        {"PodPhase": "3", "PodName": "redis", "AlarmId": 1009204},
+        {"PodPhase": "4", "PodName": "redis", "AlarmId": 1009202},
+        {"PodPhase": "5", "PodName": "redis", "AlarmId": 1009205}
+      ]
+    },
+    {
+      "name": "redis-sentinel",
+      "payload": [
+        {"PodPhase": "1", "PodName": "redis-sentinel", "AlarmId": 1009213},
+        {"PodPhase": "2", "PodName": "redis-sentinel", "AlarmId": 1009211},
+        {"PodPhase": "3", "PodName": "redis-sentinel", "AlarmId": 1009214},
+        {"PodPhase": "4", "PodName": "redis-sentinel", "AlarmId": 1009212},
+        {"PodPhase": "5", "PodName": "redis-sentinel", "AlarmId": 1009215}
+      ]
+    },
+    {
+      "name": "ipgw",
+      "payload": [
+        {"PodPhase": "1", "PodName": "ipgw", "AlarmId": 1009233},
+        {"PodPhase": "2", "PodName": "ipgw", "AlarmId": 1009231},
+        {"PodPhase": "3", "PodName": "ipgw", "AlarmId": 1009234},
+        {"PodPhase": "4", "PodName": "ipgw", "AlarmId": 1009232},
+        {"PodPhase": "5", "PodName": "ipgw", "AlarmId": 1009235}
+      ]
+    },
+    {
+      "name": "gtp",
+      "payload": [
+        {"PodPhase": "1", "PodName": "gtp", "AlarmId": 1009233},
+        {"PodPhase": "2", "PodName": "gtp", "AlarmId": 1001205},
+        {"PodPhase": "3", "PodName": "gtp", "AlarmId": 1001207},
+        {"PodPhase": "4", "PodName": "gtp", "AlarmId": 1001204},
+        {"PodPhase": "5", "PodName": "gtp", "AlarmId": 1001208}
+      ]
+    },
+    {
+      "name": "ebm-log",
+      "payload": [
+        {"PodPhase": "1", "PodName": "ebm-log", "AlarmId": 1008210},
+        {"PodPhase": "2", "PodName": "ebm-log", "AlarmId": 1008208},
+        {"PodPhase": "3", "PodName": "ebm-log", "AlarmId": 1008211},
+        {"PodPhase": "4", "PodName": "ebm-log", "AlarmId": 1008209},
+        {"PodPhase": "5", "PodName": "ebm-log", "AlarmId": 1008212}
+      ]
+    },
+    {
+      "name": "dns",
+      "payload": [
+        {"PodPhase": "1", "PodName": "dns", "AlarmId": 1009223},
+        {"PodPhase": "2", "PodName": "dns", "AlarmId": 1009221},
+        {"PodPhase": "3", "PodName": "dns", "AlarmId": 1009224},
+        {"PodPhase": "4", "PodName": "dns", "AlarmId": 1009222},
+        {"PodPhase": "5", "PodName": "dns", "AlarmId": 1009225}
+      ]
+    }
+  ]
+}

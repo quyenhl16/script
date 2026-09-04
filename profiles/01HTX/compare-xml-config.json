@@ -1,0 +1,16 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "compare-xml-config",
+  "description": "Compare two XML configurations and highlight critical paths",
+  "features": [
+    {
+      "id": "compare-xml-config",
+      "parameters": {
+        "source_xml": "/path/to/source-config.xml",
+        "target_xml": "/path/to/target-config.xml",
+        "rules_file": "checks/xml/system-critical-paths.json",
+        "show_equal": false
+      }
+    }
+  ]
+}

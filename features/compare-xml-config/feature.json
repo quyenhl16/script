@@ -1,0 +1,33 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "compare-xml-config",
+  "name": "Compare XML Configurations",
+  "version": "1.0.0",
+  "description": "Compare two XML files by canonical leaf path and highlight critical paths",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 120,
+  "parameters": {
+    "source_xml": {
+      "type": "string",
+      "description": "Path to the source or baseline XML file",
+      "required": true
+    },
+    "target_xml": {
+      "type": "string",
+      "description": "Path to the target XML file to compare",
+      "required": true
+    },
+    "rules_file": {
+      "type": "string",
+      "description": "Critical XPath definitions",
+      "default": "checks/xml/system-critical-paths.json"
+    },
+    "show_equal": {
+      "type": "boolean",
+      "description": "Show non-critical paths whose values are equal",
+      "default": false
+    }
+  }
+}

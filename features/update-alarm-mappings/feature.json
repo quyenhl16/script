@@ -1,0 +1,32 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "update-alarm-mappings",
+  "name": "Update AMF Alarm Mappings",
+  "version": "1.0.0",
+  "description": "Send AMF alarm mapping requests and summarize each HTTP result",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 600,
+  "parameters": {
+    "endpoint": {
+      "type": "string",
+      "description": "AMF updatealarm API URL",
+      "default": "http://10.0.1.101:33334/nnm-service/v1/updatealarm/AMF"
+    },
+    "requests_file": {
+      "type": "string",
+      "description": "Optional alarm mapping JSON file; defaults to the file bundled with this feature"
+    },
+    "connect_timeout_seconds": {
+      "type": "integer",
+      "description": "Maximum time for curl to establish each connection",
+      "default": 5
+    },
+    "request_timeout_seconds": {
+      "type": "integer",
+      "description": "Maximum total time for each curl request",
+      "default": 30
+    }
+  }
+}
