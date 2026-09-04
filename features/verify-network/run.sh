@@ -6,31 +6,35 @@ fail() {
   exit 1
 }
 
-valid_ipv4() {
-  local value="$1" index
-  [[ "$value" =~ ^([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3})$ ]] || return 1
-  for index in 1 2 3 4; do
-    (( 10#${BASH_REMATCH[$index]} <= 255 )) || return 1
-  done
-}
-
-(( $# > 0 )) || fail "enter at least one gateway IPv4 address"
-command -v ping >/dev/null 2>&1 || fail "ping command was not found"
+(( $# > 0 )) || fail "enter at least one bond VLAN interface"
+command -v ip >/dev/null 2>&1 || fail "ip command was not found"
 
 failures=0
-for gateway in "$@"; do
-  if ! valid_ipv4 "$gateway"; then
-    printf '[FAIL] invalid gateway IPv4 address: %s\n' "$gateway" >&2
+for interface in "$@"; do
+  if [[ ! "$interface" =~ ^[a-zA-Z0-9_-]+\.([0-9]{1,4})$ ]] || \
+     (( 10#${BASH_REMATCH[1]:-0} < 1 || 10#${BASH_REMATCH[1]:-0} > 4094 )); then
+    printf '[FAIL] invalid bond VLAN interface: %s\n' "$interface" >&2
     failures=$((failures + 1))
     continue
   fi
-  if ping -c 3 -W 2 "$gateway" >/dev/null 2>&1; then
-    printf '[PASS] gateway %s is reachable\n' "$gateway"
+
+  if ! link_info="$(ip -o link show dev "$interface" 2>/dev/null)"; then
+    printf '[FAIL] bond VLAN %s does not exist\n' "$interface" >&2
+    failures=$((failures + 1))
+    continue
+  fi
+
+  state="UNKNOWN"
+  if [[ "$link_info" =~ state[[:space:]]+([^[:space:]]+) ]]; then
+    state="${BASH_REMATCH[1]}"
+  fi
+  if [[ "$state" == "UP" ]]; then
+    printf '[PASS] bond VLAN %s exists and is UP\n' "$interface"
   else
-    printf '[FAIL] gateway %s is unreachable\n' "$gateway" >&2
+    printf '[FAIL] bond VLAN %s exists but state is %s\n' "$interface" "$state" >&2
     failures=$((failures + 1))
   fi
 done
 
-(( failures == 0 )) || fail "$failures gateway check(s) failed"
-printf 'Done: all %d gateway(s) are reachable.\n' "$#"
+(( failures == 0 )) || fail "$failures bond VLAN check(s) failed"
+printf 'Done: all %d bond VLAN interface(s) exist and are UP.\n' "$#"

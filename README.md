@@ -26,17 +26,17 @@ go test ./...
 go build -o bin/syssetup ./cmd/syssetup
 
 ./bin/syssetup list
-./bin/syssetup plan --profile profiles/base-server.json
-./bin/syssetup run --profile profiles/base-server.json --dry-run
-sudo ./bin/syssetup run --profile profiles/base-server.json
-sudo ./bin/syssetup tui --profile profiles/base-server.json
+./bin/syssetup plan --profile profiles/01HTX/base-server.json
+./bin/syssetup run --profile profiles/01HTX/base-server.json --dry-run
+sudo ./bin/syssetup run --profile profiles/01HTX/base-server.json
+sudo ./bin/syssetup tui --profile profiles/01HTX/base-server.json
 ```
 
 Kiểm tra VIP, OSPF và kết nối mạng của workload Kubernetes `pramf01`:
 
 ```bash
-./bin/syssetup plan --profile profiles/pramf01-connectivity.json
-./bin/syssetup run --profile profiles/pramf01-connectivity.json
+./bin/syssetup plan --profile profiles/01HTX/pramf01-connectivity.json
+./bin/syssetup run --profile profiles/01HTX/pramf01-connectivity.json
 ```
 
 Đổi `phase` trong profile thành `vip`, `ospf`, `ping` hoặc `all` để chọn
@@ -64,7 +64,8 @@ TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
   hoặc gửi một script cục bộ lên nhiều server qua SSH.
 - `Workflows`: danh sách quy trình nhiều step; mỗi server chạy tuần tự theo
   dependency trong khi các server vẫn được xử lý song song.
-- `Profiles`: khám phá toàn bộ `profiles/*.json`; chọn profile bằng `Enter` để
+- `Profiles`: khám phá đệ quy `profiles/<system>/*.json`, hiển thị cột hệ thống;
+  chọn profile bằng `Enter` để
   thay selection và parameters ngay trong TUI mà không cần khởi động lại.
 - Layout tự thích nghi; panel chi tiết được ẩn trên terminal hẹp.
 
@@ -81,7 +82,9 @@ Phím tắt:
 | `r` | Chạy execution plan |
 | `c` | Hủy plan đang chạy |
 | `F2` | Đổi giữa command, script và workflow trong Remote SSH |
-| `F5` | Chạy SSH trên tất cả server đã nhập |
+| `F3` | Nạp toàn bộ server và credential từ `base-server` của hệ thống hiện tại |
+| `F4` | Chuyển nhanh định dạng report giữa Markdown và HTML |
+| `F5` | Chạy SSH trên tất cả server đã nhập hoặc đã nạp |
 | `?` | Hiện trợ giúp |
 | `q` | Thoát |
 
@@ -93,9 +96,45 @@ quay về tab `Features`. Profile khởi động vẫn có thể chọn bằng `
 Trong tab `Remote SSH`, danh sách server dùng dấu phẩy hoặc khoảng trắng,
 ví dụ `10.0.0.10, 10.0.0.11:2222`. Nếu không ghi port thì mặc định là `22`.
 Các server chạy song song với timeout 30 giây/server và kết quả được hiển thị
-riêng. Password chỉ được giữ trong bộ nhớ; host key được lưu theo cơ chế
+riêng. Password nhập thủ công chỉ được giữ trong bộ nhớ và mọi password đều không
+được ghi vào log; host key được lưu theo cơ chế
 trust-on-first-use tại thư mục cấu hình người dùng và bị từ chối nếu thay đổi ở
 lần kết nối sau.
+
+Profile được nhóm theo hệ thống. Mỗi thư mục con trực tiếp dưới `profiles/` là một
+hệ thống và chứa `base-server.json` cùng các profile feature của hệ thống đó:
+
+```text
+profiles/
+└── 01HTX/
+    ├── base-server.json
+    ├── pramf01-connectivity.json
+    └── verify-xml-config.json
+```
+
+`base-server.json` lưu riêng credential cho từng máy (hãy thay các giá trị mẫu):
+
+```json
+{
+  "remoteServers": [
+    {
+      "name": "server-01",
+      "ip": "10.0.0.10",
+      "port": 22,
+      "username": "root",
+      "password": "change-me"
+    }
+  ]
+}
+```
+
+Vì password nằm dạng rõ trong JSON, cần giới hạn quyền đọc file/thư mục profile
+cho đúng tài khoản vận hành và không commit credential thật vào kho mã nguồn.
+
+Trong mọi chế độ SSH (command, script và workflow), có thể nhập server/user/password
+thủ công như trước. Nếu không nhập thủ công, nhấn `F3` để nạp toàn bộ server kèm
+credential từ profile `base-server` thuộc cùng hệ thống; sau đó nhấn `F5` để chạy.
+Nếu nhập server thủ công sau khi nạp, dữ liệu thủ công được ưu tiên.
 
 ### Workflow Prepare Setup Deploy
 
@@ -110,8 +149,9 @@ Workflow `prepare-setup-deploy` chạy theo thứ tự trên từng server:
 Mở tab `5 Workflows`, chọn workflow và nhấn `Enter`. Dashboard sẽ nạp file
 `workflow-configs/prepare-setup-deploy.json`; nhập server/user/password rồi nhấn
 `F5`. Có thể thêm nhiều invocation trong `create-vlan` để tạo nhiều VLAN. Bước
-`verify-network` không cần cấu hình riêng: executor tự lấy và loại trùng các giá
-trị `gateway=` của toàn bộ invocation VLAN, sau đó ping các gateway đó.
+`verify-network` không cần cấu hình riêng: executor tự lấy và loại trùng tên
+interface (argument đầu tiên) của toàn bộ invocation VLAN. Feature sau đó kiểm tra
+từng interface đã tồn tại và có trạng thái `UP`; không ping gateway.
 
 Nếu một step lỗi trên server nào, các step sau chỉ bị bỏ qua trên server đó;
 những server khác vẫn tiếp tục. Kết quả hiển thị theo server, step và invocation.
@@ -155,7 +195,7 @@ trên pod duy nhất trả về `confd-state ha mode master`. Nếu không có m
 cả hai pod cùng báo master, feature dừng mà không load cấu hình.
 
 Sửa namespace và các đường dẫn nếu cần trong
-`profiles/load-netconf-config.json`:
+`profiles/01HTX/load-netconf-config.json`:
 
 ```json
 {
@@ -173,8 +213,8 @@ Sửa namespace và các đường dẫn nếu cần trong
 Sau đó chạy:
 
 ```bash
-./bin/syssetup plan --profile profiles/load-netconf-config.json
-./bin/syssetup run --profile profiles/load-netconf-config.json
+./bin/syssetup plan --profile profiles/01HTX/load-netconf-config.json
+./bin/syssetup run --profile profiles/01HTX/load-netconf-config.json
 ```
 
 Sau khi xác định master, feature copy file local `source_config_file` qua stdin
@@ -196,7 +236,7 @@ Feature `verify-xml-config` chỉ đọc một file XML local và so sánh các 
 trọng với bộ rule JSON. Feature này chạy qua luồng local `Features -> Plan -> Run`,
 không dùng SSH và không nằm trong workflow.
 
-Sửa `xml_file` trong profile mẫu `profiles/verify-xml-config.json` thành file XML
+Sửa `xml_file` trong profile mẫu `profiles/01HTX/verify-xml-config.json` thành file XML
 cần kiểm tra. `rules_file` mặc định trỏ tới
 `checks/xml/system-critical-paths.json` và có thể đổi sang file rule khác:
 
@@ -213,8 +253,8 @@ cần kiểm tra. `rules_file` mặc định trỏ tới
 Sau đó chạy:
 
 ```bash
-./bin/syssetup plan --profile profiles/verify-xml-config.json
-./bin/syssetup run --profile profiles/verify-xml-config.json
+./bin/syssetup plan --profile profiles/01HTX/verify-xml-config.json
+./bin/syssetup run --profile profiles/01HTX/verify-xml-config.json
 ```
 
 Rule so sánh scalar khai báo XPath và giá trị mong đợi:
@@ -276,6 +316,31 @@ Log mặc định được ghi vào `syssetup.log`. Có thể đổi bằng `--l
 Các dòng `[PASS]` được tô xanh và `[FAIL]` được tô đỏ trên CLI/TUI; file log
 vẫn lưu text thuần. Đặt biến môi trường `NO_COLOR=1` để tắt màu hiển thị.
 
+## Report kết quả
+
+Mỗi lần thực thi feature, SSH command/script hoặc workflow sẽ tạo một report độc
+lập. Markdown là định dạng mặc định và có thể đọc trực tiếp trên server bằng
+`less` hoặc `vim`:
+
+```bash
+less reports/01HTX/20260904_153025.000_prepare-setup-deploy.md
+```
+
+Report được nhóm theo hệ thống tại `reports/<system>/`, gồm trạng thái tổng, thời
+gian chạy, thống kê thành công/thất bại và output chi tiết theo feature/server/step.
+Mã màu terminal được loại bỏ và credential SSH không được đưa vào report.
+
+Chọn định dạng khi chạy CLI:
+
+```bash
+syssetup run --profile profiles/01HTX/base-server.json --report-format md
+syssetup run --profile profiles/01HTX/base-server.json --report-format html
+```
+
+Dùng `--reports-dir PATH` để đổi thư mục lưu. Trong TUI, định dạng hiện tại nằm
+ở góc phải header; nhấn `F4` để chuyển đơn giản giữa `MD` và `HTML`. Sau khi lệnh
+kết thúc, đường dẫn report được hiển thị trên thanh trạng thái.
+
 ## Thêm feature
 
 Tạo cấu trúc:
@@ -310,7 +375,7 @@ Entrypoint phải hỗ trợ bốn action:
 - `verify`: xác nhận trạng thái sau thay đổi.
 - `rollback`: hoàn tác nếu feature hỗ trợ.
 
-Sau đó thêm `{"id":"nginx"}` vào một file trong `profiles/`. Không cần đăng ký feature trong Go.
+Sau đó thêm `{"id":"nginx"}` vào một file trong `profiles/<system>/`. Không cần đăng ký feature trong Go.
 
 ## Phân phối
 

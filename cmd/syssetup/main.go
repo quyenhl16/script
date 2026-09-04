@@ -1,18 +1,22 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/quyenhl16/script/internal/config"
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
+	"github.com/quyenhl16/script/internal/report"
 	"github.com/quyenhl16/script/internal/runner"
 	"github.com/quyenhl16/script/internal/ui"
 	"github.com/quyenhl16/script/internal/workflow"
@@ -41,10 +45,16 @@ func run(ctx context.Context, args []string) error {
 	featuresDir := flags.String("features-dir", envOrDefault("SYSSETUP_FEATURES_DIR", "features"), "directory containing feature packages")
 	workflowsDir := flags.String("workflows-dir", envOrDefault("SYSSETUP_WORKFLOWS_DIR", "workflows"), "directory containing workflow packages")
 	profilesDir := flags.String("profiles-dir", envOrDefault("SYSSETUP_PROFILES_DIR", "profiles"), "directory containing selectable profiles")
-	profilePath := flags.String("profile", "profiles/base-server.json", "profile JSON file")
+	profilePath := flags.String("profile", filepath.Join("profiles", "01HTX", "base-server.json"), "profile JSON file")
 	dryRun := flags.Bool("dry-run", false, "show execution plan without changing the system")
 	logPath := flags.String("log", "syssetup.log", "execution log file")
+	reportFormatValue := flags.String("report-format", envOrDefault("SYSSETUP_REPORT_FORMAT", "md"), "report format: md or html")
+	reportsDir := flags.String("reports-dir", envOrDefault("SYSSETUP_REPORTS_DIR", "reports"), "directory for generated reports")
 	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	reportFormat, err := report.ParseFormat(*reportFormatValue)
+	if err != nil {
 		return err
 	}
 
@@ -82,7 +92,10 @@ func run(ctx context.Context, args []string) error {
 				return err
 			}
 			profiles = includeProfile(profiles, profile)
-			return ui.New(os.Stdin, os.Stdout).Run(ctx, reg, workflows, profiles, profile, runner.Options{DryRun: *dryRun, LogPath: *logPath, Output: os.Stdout})
+			return ui.New(os.Stdin, os.Stdout).Run(ctx, reg, workflows, profiles, profile, runner.Options{
+				DryRun: *dryRun, LogPath: *logPath, Output: os.Stdout,
+				ReportFormat: string(reportFormat), ReportsDir: filepath.Clean(*reportsDir),
+			})
 		}
 		resolved, err := reg.Resolve(profile)
 		if err != nil {
@@ -92,22 +105,41 @@ func run(ctx context.Context, args []string) error {
 			printPlan(profile, resolved)
 			return nil
 		}
-		executor, err := runner.New(runner.Options{DryRun: *dryRun, LogPath: *logPath, Output: os.Stdout})
+		started := time.Now()
+		var output bytes.Buffer
+		executor, err := runner.New(runner.Options{DryRun: *dryRun, LogPath: *logPath, Output: io.MultiWriter(os.Stdout, &output)})
 		if err != nil {
-			return err
+			reportPath, reportErr := report.Write(
+				report.FeatureRun(profile, nil, output.String(), err, started, time.Now()),
+				report.Options{Directory: filepath.Clean(*reportsDir), Format: reportFormat},
+			)
+			printReportPath(reportPath)
+			return report.JoinRunAndReportErrors(err, reportErr)
 		}
-		defer executor.Close()
-		_, err = executor.Execute(ctx, resolved)
-		return err
+		results, runErr := executor.Execute(ctx, resolved)
+		closeErr := executor.Close()
+		finished := time.Now()
+		reportPath, reportErr := report.Write(
+			report.FeatureRun(profile, results, output.String(), errors.Join(runErr, closeErr), started, finished),
+			report.Options{Directory: filepath.Clean(*reportsDir), Format: reportFormat},
+		)
+		printReportPath(reportPath)
+		return report.JoinRunAndReportErrors(errors.Join(runErr, closeErr), reportErr)
 	default:
 		usage()
 		return fmt.Errorf("unknown command %q", args[0])
 	}
 }
 
+func printReportPath(path string) {
+	if path != "" {
+		fmt.Println("Report:", path)
+	}
+}
+
 func includeProfile(profiles []domain.Profile, profile domain.Profile) []domain.Profile {
 	for index, existing := range profiles {
-		if strings.EqualFold(existing.Name, profile.Name) {
+		if sameProfile(existing, profile) {
 			profiles[index] = profile
 			sortProfiles(profiles)
 			return profiles
@@ -120,8 +152,24 @@ func includeProfile(profiles []domain.Profile, profile domain.Profile) []domain.
 
 func sortProfiles(profiles []domain.Profile) {
 	sort.Slice(profiles, func(i, j int) bool {
+		leftSystem := strings.ToLower(profiles[i].System)
+		rightSystem := strings.ToLower(profiles[j].System)
+		if leftSystem != rightSystem {
+			return leftSystem < rightSystem
+		}
 		return strings.ToLower(profiles[i].Name) < strings.ToLower(profiles[j].Name)
 	})
+}
+
+func sameProfile(left, right domain.Profile) bool {
+	if left.Path != "" && right.Path != "" {
+		leftPath, leftErr := filepath.Abs(left.Path)
+		rightPath, rightErr := filepath.Abs(right.Path)
+		if leftErr == nil && rightErr == nil && strings.EqualFold(leftPath, rightPath) {
+			return true
+		}
+	}
+	return strings.EqualFold(left.System, right.System) && strings.EqualFold(left.Name, right.Name)
 }
 
 func loadOptionalProfile(path string, optional bool) (domain.Profile, error) {
@@ -157,7 +205,7 @@ Usage:
   syssetup list [--features-dir PATH]
   syssetup workflows [--features-dir PATH] [--workflows-dir PATH]
   syssetup plan [--profile PATH]
-  syssetup run  [--profile PATH] [--dry-run] [--log PATH]
-  syssetup tui  [--profile PATH] [--profiles-dir PATH] [--workflows-dir PATH] [--dry-run] [--log PATH]
+  syssetup run  [--profile PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH]
+  syssetup tui  [--profile PATH] [--profiles-dir PATH] [--workflows-dir PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH]
   syssetup version`)
 }

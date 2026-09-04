@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
@@ -139,6 +140,48 @@ func TestSSHFormMasksPasswordAndSwitchesMode(t *testing.T) {
 	}
 }
 
+func TestReportFormatDefaultsToMarkdownAndTogglesSimply(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(context.Background(), reg, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	if m.reportFormat != "md" {
+		t.Fatalf("default report format = %q, want md", m.reportFormat)
+	}
+	m.toggleReportFormat()
+	if m.reportFormat != "html" {
+		t.Fatalf("toggled report format = %q, want html", m.reportFormat)
+	}
+	m.toggleReportFormat()
+	if m.reportFormat != "md" {
+		t.Fatalf("second toggled report format = %q, want md", m.reportFormat)
+	}
+}
+
+func TestCompletedFeatureRunWritesSelectedReportFormat(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportsDir := t.TempDir()
+	profile := domain.Profile{APIVersion: "syssetup/v1", Name: "test", System: "01HTX", Features: []domain.FeatureSelection{{ID: "base"}}}
+	m := newModel(context.Background(), reg, profile, runner.Options{ReportsDir: reportsDir, ReportFormat: "html"})
+	m.runStartedAt = time.Now().Add(-time.Second)
+	m.Update(runFinishedMsg{results: []domain.Result{{FeatureID: "base", Status: domain.StatusDone, Message: "configured"}}, output: "[PASS] complete"})
+	matches, err := filepath.Glob(filepath.Join(reportsDir, "01HTX", "*.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || !strings.Contains(m.notice, matches[0]) {
+		t.Fatalf("report files = %#v, notice = %q", matches, m.notice)
+	}
+}
+
 func TestSSHFormValidationDoesNotStartRun(t *testing.T) {
 	root := t.TempDir()
 	writeDashboardFeature(t, root, "base", "")
@@ -151,6 +194,76 @@ func TestSSHFormValidationDoesNotStartRun(t *testing.T) {
 	m.startRemoteRun()
 	if m.remoteRunning || m.remoteErr == nil {
 		t.Fatalf("expected validation error, running=%v error=%v", m.remoteRunning, m.remoteErr)
+	}
+}
+
+func TestSSHLoadsRemoteServersFromSameSystemBaseProfile(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseProfile := domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "base-server",
+		System:     "01HTX",
+		Features:   []domain.FeatureSelection{{ID: "base"}},
+		RemoteServers: []domain.RemoteServer{
+			{Name: "node-1", IP: "10.0.0.1", Username: "root", Password: "one"},
+			{Name: "node-2", IP: "server.example", Port: 2222, Username: "admin", Password: "two"},
+		},
+	}
+	featureProfile := domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "network",
+		System:     "01HTX",
+		Features:   []domain.FeatureSelection{{ID: "base"}},
+	}
+	m := newModelWithProfiles(context.Background(), reg, nil, []domain.Profile{baseProfile, featureProfile}, featureProfile, runner.Options{})
+	m.loadBaseServers()
+	servers, err := m.sshServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 || servers[0].Address != "10.0.0.1:22" || servers[0].Password != "one" {
+		t.Fatalf("unexpected first server: %#v", servers)
+	}
+	if servers[1].Address != "server.example:2222" || servers[1].User != "admin" || servers[1].Password != "two" {
+		t.Fatalf("unexpected second server: %#v", servers[1])
+	}
+
+	m.sshInputs[sshHosts].SetValue("192.0.2.10")
+	m.sshInputs[sshUser].SetValue("manual")
+	m.sshInputs[sshPassword].SetValue("manual-secret")
+	servers, err = m.sshServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 1 || servers[0].Address != "192.0.2.10:22" || servers[0].User != "manual" {
+		t.Fatalf("manual server did not take precedence: %#v", servers)
+	}
+}
+
+func TestSSHDoesNotLoadBaseProfileFromAnotherSystem(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseProfile := domain.Profile{
+		APIVersion:    "syssetup/v1",
+		Name:          "base-server",
+		System:        "02HCM",
+		Features:      []domain.FeatureSelection{{ID: "base"}},
+		RemoteServers: []domain.RemoteServer{{IP: "10.0.0.1", Username: "root", Password: "secret"}},
+	}
+	featureProfile := domain.Profile{APIVersion: "syssetup/v1", Name: "network", System: "01HTX", Features: []domain.FeatureSelection{{ID: "base"}}}
+	m := newModelWithProfiles(context.Background(), reg, nil, []domain.Profile{featureProfile, baseProfile}, featureProfile, runner.Options{})
+	m.loadBaseServers()
+	if m.remoteErr == nil || len(m.profileServers) != 0 {
+		t.Fatalf("expected system-scoped base-server error, servers=%#v error=%v", m.profileServers, m.remoteErr)
 	}
 }
 
@@ -195,7 +308,7 @@ func TestWorkflowLoadsIntoSSHForm(t *testing.T) {
     {"id":"paths","feature":"create-local-path"},
     {"id":"vlan","feature":"create-bond-vlan","needs":["paths"]},
     {"id":"verify","feature":"verify-network","needs":["vlan"],
-     "deriveArgs":{"step":"vlan","prefix":"gateway=","stripPrefix":true}}
+     "deriveArgs":{"step":"vlan","argumentIndex":0,"requireEach":true}}
   ]
 }`
 	if err := os.WriteFile(filepath.Join(workflowDirectory, "workflow.json"), []byte(manifest), 0o644); err != nil {

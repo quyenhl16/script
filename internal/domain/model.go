@@ -30,10 +30,21 @@ type FeatureSelection struct {
 }
 
 type Profile struct {
-	APIVersion  string             `json:"apiVersion"`
-	Name        string             `json:"name"`
-	Description string             `json:"description,omitempty"`
-	Features    []FeatureSelection `json:"features"`
+	APIVersion    string             `json:"apiVersion"`
+	Name          string             `json:"name"`
+	Description   string             `json:"description,omitempty"`
+	Features      []FeatureSelection `json:"features"`
+	RemoteServers []RemoteServer     `json:"remoteServers,omitempty"`
+	System        string             `json:"-"`
+	Path          string             `json:"-"`
+}
+
+type RemoteServer struct {
+	Name     string `json:"name,omitempty"`
+	IP       string `json:"ip"`
+	Port     int    `json:"port,omitempty"`
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type ResolvedFeature struct {

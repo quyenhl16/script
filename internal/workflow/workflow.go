@@ -42,10 +42,11 @@ type Step struct {
 }
 
 type DeriveArgs struct {
-	Step        string `json:"step"`
-	Prefix      string `json:"prefix"`
-	StripPrefix bool   `json:"stripPrefix,omitempty"`
-	RequireEach bool   `json:"requireEach,omitempty"`
+	Step          string `json:"step"`
+	Prefix        string `json:"prefix,omitempty"`
+	ArgumentIndex *int   `json:"argumentIndex,omitempty"`
+	StripPrefix   bool   `json:"stripPrefix,omitempty"`
+	RequireEach   bool   `json:"requireEach,omitempty"`
 }
 
 type Config struct {
@@ -194,8 +195,16 @@ func validateDefinition(definition Definition, features *registry.Registry) erro
 			if !seen[step.DeriveArgs.Step] {
 				return fmt.Errorf("step %q derives arguments from unknown or later step %q", step.ID, step.DeriveArgs.Step)
 			}
-			if step.DeriveArgs.Prefix == "" {
-				return fmt.Errorf("step %q deriveArgs.prefix is required", step.ID)
+			hasPrefix := step.DeriveArgs.Prefix != ""
+			hasIndex := step.DeriveArgs.ArgumentIndex != nil
+			if hasPrefix == hasIndex {
+				return fmt.Errorf("step %q deriveArgs requires exactly one of prefix or argumentIndex", step.ID)
+			}
+			if hasIndex && *step.DeriveArgs.ArgumentIndex < 0 {
+				return fmt.Errorf("step %q deriveArgs.argumentIndex must not be negative", step.ID)
+			}
+			if hasIndex && step.DeriveArgs.StripPrefix {
+				return fmt.Errorf("step %q deriveArgs.stripPrefix requires prefix", step.ID)
 			}
 			if !contains(step.Needs, step.DeriveArgs.Step) {
 				return fmt.Errorf("step %q must depend on argument source step %q", step.ID, step.DeriveArgs.Step)
@@ -294,28 +303,47 @@ func deriveInvocations(step Step, config Config) ([]Invocation, error) {
 	var arguments []string
 	for _, source := range config.Steps[step.DeriveArgs.Step] {
 		matched := 0
-		for _, argument := range source.Args {
-			if !strings.HasPrefix(argument, step.DeriveArgs.Prefix) {
-				continue
+		if step.DeriveArgs.ArgumentIndex != nil {
+			index := *step.DeriveArgs.ArgumentIndex
+			if index < len(source.Args) {
+				value := source.Args[index]
+				if value != "" && !seen[value] {
+					seen[value] = true
+					arguments = append(arguments, value)
+				}
+				matched = 1
 			}
-			value := argument
-			if step.DeriveArgs.StripPrefix {
-				value = strings.TrimPrefix(argument, step.DeriveArgs.Prefix)
+		} else {
+			for _, argument := range source.Args {
+				if !strings.HasPrefix(argument, step.DeriveArgs.Prefix) {
+					continue
+				}
+				value := argument
+				if step.DeriveArgs.StripPrefix {
+					value = strings.TrimPrefix(argument, step.DeriveArgs.Prefix)
+				}
+				if value != "" && !seen[value] {
+					seen[value] = true
+					arguments = append(arguments, value)
+				}
+				matched++
 			}
-			if value != "" && !seen[value] {
-				seen[value] = true
-				arguments = append(arguments, value)
-			}
-			matched++
 		}
 		if step.DeriveArgs.RequireEach && matched == 0 {
-			return nil, fmt.Errorf("step %q source invocation has no argument with prefix %q", step.ID, step.DeriveArgs.Prefix)
+			return nil, fmt.Errorf("step %q source invocation has no %s", step.ID, deriveArgsSelector(*step.DeriveArgs))
 		}
 	}
 	if len(arguments) == 0 {
-		return nil, fmt.Errorf("step %q could not derive arguments with prefix %q from step %q", step.ID, step.DeriveArgs.Prefix, step.DeriveArgs.Step)
+		return nil, fmt.Errorf("step %q could not derive arguments using %s from step %q", step.ID, deriveArgsSelector(*step.DeriveArgs), step.DeriveArgs.Step)
 	}
 	return []Invocation{{Args: arguments}}, nil
+}
+
+func deriveArgsSelector(derive DeriveArgs) string {
+	if derive.ArgumentIndex != nil {
+		return fmt.Sprintf("argument at index %d", *derive.ArgumentIndex)
+	}
+	return fmt.Sprintf("argument with prefix %q", derive.Prefix)
 }
 
 func (r *Registry) Execute(ctx context.Context, definition Definition, config Config, servers []remote.Server, hostKeys ssh.HostKeyCallback) (Execution, error) {

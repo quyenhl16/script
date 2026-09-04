@@ -3,7 +3,8 @@
 ## Nguyên tắc
 
 - Go điều phối; Bash thay đổi hệ thống.
-- Profile mô tả server cần feature nào.
+- Profile được nhóm theo `profiles/<system>/`; profile mô tả feature cần chạy và
+  `base-server.json` của từng hệ thống có thể lưu danh sách đích SSH cùng credential.
 - Feature package tự chứa manifest, script và asset.
 - Runner không biết logic riêng của Nginx, Docker hay database.
 - Feature phải idempotent và có thể kiểm tra trước khi thay đổi.
@@ -41,6 +42,10 @@ workflow config + workflow manifest
     -> per-server step results
 ```
 
+Các chế độ SSH command, script và workflow dùng chung một nguồn server. Người vận
+hành có thể nhập một credential dùng chung cho danh sách host, hoặc nạp danh sách
+`remoteServers` (mỗi host có credential riêng) từ `base-server` cùng hệ thống.
+
 Dependency luôn chạy trước feature phụ thuộc và chỉ xuất hiện một lần trong execution plan.
 
 ## Ranh giới package Go
@@ -50,6 +55,8 @@ Dependency luôn chạy trước feature phụ thuộc và chỉ xuất hiện m
 - `registry`: khám phá feature, validation và dependency resolution.
 - `platform`: nhận diện `/etc/os-release` và quyền root.
 - `runner`: timeout, process execution, output và log.
+- `report`: chuẩn hóa kết quả và sinh report Markdown hoặc HTML tự chứa sau mỗi
+  lần thực thi.
 - `workflow`: khám phá workflow, validate config, derive output-to-input và điều
   phối remote feature theo từng server.
 - `ui`: dashboard Bubble Tea gồm bảng feature, execution plan, live logs và
@@ -74,8 +81,9 @@ Runner truyền parameter dưới dạng `SYSSETUP_PARAM_<NAME>`. Không dùng `
 Manifest dùng `apiVersion: syssetup/workflow/v1`. Mỗi step tham chiếu một
 `remoteOnly` feature và chỉ được phụ thuộc step đã khai báo trước. Config
 `syssetup/workflow-config/v1` chứa danh sách invocation/args. `deriveArgs` cho
-phép step sau thu thập argument có prefix từ config của step trước mà không lặp
-lại dữ liệu, ví dụ lấy `gateway=` của `create-vlan` cho `verify-network`.
+phép step sau thu thập argument theo prefix hoặc vị trí từ config của step trước
+mà không lặp lại dữ liệu, ví dụ lấy argument đầu tiên (tên interface) của
+`create-vlan` cho `verify-network`. `argumentIndex` sử dụng chỉ số bắt đầu từ `0`.
 
 Mỗi invocation có thể khai báo `artifacts` gồm `id` và local `source`. Executor
 đọc và giới hạn kích thước file trước khi kết nối, mã hóa nội dung vào stdin của

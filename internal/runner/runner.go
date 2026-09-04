@@ -22,9 +22,11 @@ const checkNeedsChange = 10
 var unsafeEnvCharacters = regexp.MustCompile(`[^A-Z0-9_]`)
 
 type Options struct {
-	DryRun  bool
-	LogPath string
-	Output  io.Writer
+	DryRun       bool
+	LogPath      string
+	Output       io.Writer
+	ReportFormat string
+	ReportsDir   string
 }
 
 type Runner struct {

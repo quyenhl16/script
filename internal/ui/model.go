@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
 	"github.com/quyenhl16/script/internal/remote"
+	runreport "github.com/quyenhl16/script/internal/report"
 	"github.com/quyenhl16/script/internal/runner"
 	"github.com/quyenhl16/script/internal/workflow"
 )
@@ -85,18 +88,27 @@ type model struct {
 	workflows         []workflow.Definition
 	profiles          []domain.Profile
 
-	table         table.Model
-	workflowTable table.Model
-	profileTable  table.Model
-	filter        textinput.Model
-	featureDetail viewport.Model
-	logs          viewport.Model
-	sshOutput     viewport.Model
-	spinner       spinner.Model
-	activeTab     tabID
-	sshInputs     []textinput.Model
-	sshFocus      int
-	sshMode       sshMode
+	table           table.Model
+	workflowTable   table.Model
+	profileTable    table.Model
+	filter          textinput.Model
+	featureDetail   viewport.Model
+	logs            viewport.Model
+	sshOutput       viewport.Model
+	spinner         spinner.Model
+	activeTab       tabID
+	sshInputs       []textinput.Model
+	sshFocus        int
+	sshMode         sshMode
+	profileServers  []remote.Server
+	serverSource    string
+	reportFormat    runreport.Format
+	reportsDir      string
+	runStartedAt    time.Time
+	remoteStartedAt time.Time
+	remoteOperation string
+	remoteKind      string
+	activeWorkflow  workflow.Definition
 
 	width         int
 	height        int
@@ -121,6 +133,14 @@ func newModelWithWorkflows(ctx context.Context, registry *registry.Registry, wor
 }
 
 func newModelWithProfiles(ctx context.Context, registry *registry.Registry, workflowRegistry *workflow.Registry, profiles []domain.Profile, profile domain.Profile, options runner.Options) *model {
+	reportFormat, reportFormatErr := runreport.ParseFormat(options.ReportFormat)
+	if reportFormatErr != nil {
+		reportFormat = runreport.Markdown
+	}
+	reportsDir := options.ReportsDir
+	if reportsDir == "" {
+		reportsDir = "reports"
+	}
 	filter := textinput.New()
 	filter.Prompt = "/ "
 	filter.Placeholder = "filter features"
@@ -149,6 +169,8 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 		profileParameters: make(map[string]map[string]any),
 		statuses:          make(map[string]domain.Status),
 		profiles:          profiles,
+		reportFormat:      reportFormat,
+		reportsDir:        reportsDir,
 		table: table.New(
 			table.WithFocused(true),
 			table.WithStyles(styles),
@@ -190,7 +212,8 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 		table.WithHeight(10),
 		table.WithColumns([]table.Column{
 			{Title: "#", Width: 4},
-			{Title: "PROFILE", Width: 45},
+			{Title: "SYSTEM", Width: 16},
+			{Title: "PROFILE", Width: 28},
 			{Title: "FEATURES", Width: 10},
 		}),
 	)
@@ -209,7 +232,7 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 		m.profileParameters[item.ID] = item.Parameters
 	}
 	for index, available := range m.profiles {
-		if strings.EqualFold(available.Name, profile.Name) {
+		if sameProfile(available, profile) {
 			m.profileTable.SetCursor(index)
 			break
 		}
@@ -235,11 +258,18 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		for _, result := range msg.results {
 			m.statuses[result.FeatureID] = result.Status
 		}
+		finished := time.Now()
+		reportPath, reportErr := runreport.Write(
+			runreport.FeatureRun(m.profile, msg.results, msg.output, msg.err, m.runStartedAt, finished),
+			runreport.Options{Directory: m.reportsDir, Format: m.reportFormat},
+		)
+		m.runErr = runreport.JoinRunAndReportErrors(m.runErr, reportErr)
 		if msg.err != nil {
 			m.notice = "Run failed: " + msg.err.Error()
 		} else {
 			m.notice = "Run completed"
 		}
+		m.notice = reportNotice(m.notice, reportPath, reportErr)
 		m.activeOutput = nil
 		m.refreshRows()
 		return m, nil
@@ -272,6 +302,13 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.sshOutput.SetContent(strings.TrimRight(output.String(), "\n"))
 		m.sshOutput.GotoBottom()
 		m.notice = fmt.Sprintf("SSH completed: %d/%d server(s) succeeded", succeeded, len(msg.results))
+		finished := time.Now()
+		reportPath, reportErr := runreport.Write(
+			runreport.RemoteRun(m.profile, m.remoteOperation, m.remoteKind, msg.results, m.remoteStartedAt, finished),
+			runreport.Options{Directory: m.reportsDir, Format: m.reportFormat},
+		)
+		m.remoteErr = runreport.JoinRunAndReportErrors(m.remoteErr, reportErr)
+		m.notice = reportNotice(m.notice, reportPath, reportErr)
 		return m, nil
 	case workflowFinishedMsg:
 		m.remoteRunning = false
@@ -314,6 +351,13 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.notice = fmt.Sprintf("Workflow completed: %d/%d server(s) succeeded", succeeded, len(msg.execution.Servers))
 		}
+		finished := time.Now()
+		reportPath, reportErr := runreport.Write(
+			runreport.WorkflowRun(m.profile, m.activeWorkflow, msg.execution, msg.err, m.remoteStartedAt, finished),
+			runreport.Options{Directory: m.reportsDir, Format: m.reportFormat},
+		)
+		m.remoteErr = runreport.JoinRunAndReportErrors(m.remoteErr, reportErr)
+		m.notice = reportNotice(m.notice, reportPath, reportErr)
 		return m, nil
 	case logTickMsg:
 		if m.activeOutput != nil {
@@ -448,6 +492,14 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggleSSHMode()
 		}
 		return m, nil
+	case "f3":
+		if m.activeTab == tabSSH && !m.remoteRunning {
+			m.loadBaseServers()
+		}
+		return m, nil
+	case "f4":
+		m.toggleReportFormat()
+		return m, nil
 	case "f5":
 		if m.activeTab == tabSSH && !m.remoteRunning {
 			return m, m.startRemoteRun()
@@ -539,6 +591,14 @@ func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.toggleSSHMode()
 		}
 		return m, nil
+	case "f3":
+		if !m.remoteRunning {
+			m.loadBaseServers()
+		}
+		return m, nil
+	case "f4":
+		m.toggleReportFormat()
+		return m, nil
 	case "f5":
 		if !m.remoteRunning {
 			return m, m.startRemoteRun()
@@ -610,22 +670,11 @@ func (m *model) startRemoteRun() tea.Cmd {
 		m.notice = "Wait for the feature plan to finish before starting SSH"
 		return nil
 	}
-	addresses, err := remote.ParseAddresses(m.sshInputs[sshHosts].Value())
+	servers, err := m.sshServers()
 	if err != nil {
 		m.remoteErr = err
 		m.notice = "SSH: " + err.Error()
 		return nil
-	}
-	user := strings.TrimSpace(m.sshInputs[sshUser].Value())
-	password := m.sshInputs[sshPassword].Value()
-	if user == "" || password == "" {
-		m.remoteErr = errors.New("user and password are required")
-		m.notice = "SSH: user and password are required"
-		return nil
-	}
-	servers := make([]remote.Server, 0, len(addresses))
-	for _, address := range addresses {
-		servers = append(servers, remote.Server{Address: address, User: user, Password: password})
 	}
 	knownHostsPath, err := remote.DefaultKnownHostsPath()
 	var hostKeys ssh.HostKeyCallback
@@ -663,6 +712,10 @@ func (m *model) startRemoteRun() tea.Cmd {
 		}
 		m.remoteErr = nil
 		m.remoteRunning = true
+		m.remoteStartedAt = time.Now()
+		m.remoteOperation = definition.ID
+		m.remoteKind = "workflow"
+		m.activeWorkflow = definition
 		m.notice = fmt.Sprintf("Running workflow %s on %d server(s)...", definition.ID, len(servers))
 		m.sshOutput.SetContent("Starting workflow...")
 		runContext, cancel := context.WithCancel(m.ctx)
@@ -687,6 +740,14 @@ func (m *model) startRemoteRun() tea.Cmd {
 	}
 	m.remoteErr = nil
 	m.remoteRunning = true
+	m.remoteStartedAt = time.Now()
+	m.remoteOperation = "ssh-command"
+	m.remoteKind = "SSH command"
+	if m.sshMode == sshScript {
+		name := strings.TrimSuffix(filepath.Base(m.sshInputs[sshScriptPath].Value()), filepath.Ext(m.sshInputs[sshScriptPath].Value()))
+		m.remoteOperation = "ssh-script-" + name
+		m.remoteKind = "SSH script"
+	}
 	m.notice = fmt.Sprintf("Running SSH on %d server(s)...", len(request.Servers))
 	m.sshOutput.SetContent("Connecting...")
 	runContext, cancel := context.WithCancel(m.ctx)
@@ -739,6 +800,8 @@ func (m *model) loadCurrentProfile() {
 	m.filter.Blur()
 	m.filter.SetValue("")
 	m.runErr = nil
+	m.profileServers = nil
+	m.serverSource = ""
 	m.notice = fmt.Sprintf("Profile %s loaded: %d feature(s) selected", profile.Name, len(profile.Features))
 	for _, item := range profile.Features {
 		m.selected[item.ID] = true
@@ -747,6 +810,104 @@ func (m *model) loadCurrentProfile() {
 	m.refreshPlan()
 	m.refreshRows()
 	m.activeTab = tabFeatures
+}
+
+func (m *model) loadBaseServers() {
+	profile, found := m.baseServerProfile()
+	if !found {
+		m.remoteErr = errors.New("base-server profile is not available for the current system")
+		m.notice = "SSH: " + m.remoteErr.Error()
+		return
+	}
+	servers, err := remoteServersFromProfile(profile)
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "SSH: " + err.Error()
+		return
+	}
+	m.profileServers = servers
+	m.serverSource = profileLabel(profile)
+	m.sshInputs[sshHosts].SetValue("")
+	m.sshInputs[sshUser].SetValue("")
+	m.sshInputs[sshPassword].SetValue("")
+	m.remoteErr = nil
+	m.notice = fmt.Sprintf("Loaded %d remote server(s) from %s", len(servers), m.serverSource)
+}
+
+func (m *model) baseServerProfile() (domain.Profile, bool) {
+	if strings.EqualFold(m.profile.Name, "base-server") && len(m.profile.RemoteServers) > 0 {
+		return m.profile, true
+	}
+	for _, profile := range m.profiles {
+		if strings.EqualFold(profile.System, m.profile.System) && strings.EqualFold(profile.Name, "base-server") && len(profile.RemoteServers) > 0 {
+			return profile, true
+		}
+	}
+	return domain.Profile{}, false
+}
+
+func (m *model) sshServers() ([]remote.Server, error) {
+	hosts := strings.TrimSpace(m.sshInputs[sshHosts].Value())
+	if hosts == "" {
+		if len(m.profileServers) == 0 {
+			return nil, errors.New("enter server addresses or press F3 to load base-server")
+		}
+		return append([]remote.Server(nil), m.profileServers...), nil
+	}
+	addresses, err := remote.ParseAddresses(hosts)
+	if err != nil {
+		return nil, err
+	}
+	user := strings.TrimSpace(m.sshInputs[sshUser].Value())
+	password := m.sshInputs[sshPassword].Value()
+	if user == "" || password == "" {
+		return nil, errors.New("user and password are required for manually entered servers")
+	}
+	servers := make([]remote.Server, 0, len(addresses))
+	for _, address := range addresses {
+		servers = append(servers, remote.Server{Address: address, User: user, Password: password})
+	}
+	return servers, nil
+}
+
+func remoteServersFromProfile(profile domain.Profile) ([]remote.Server, error) {
+	servers := make([]remote.Server, 0, len(profile.RemoteServers))
+	for index, configured := range profile.RemoteServers {
+		addresses, err := remote.ParseAddresses(configured.IP)
+		if err != nil || len(addresses) != 1 {
+			if err == nil {
+				err = errors.New("ip must contain exactly one address")
+			}
+			return nil, fmt.Errorf("%s remoteServers[%d]: %w", profileLabel(profile), index, err)
+		}
+		address := addresses[0]
+		if configured.Port > 0 {
+			host, _, splitErr := net.SplitHostPort(address)
+			if splitErr != nil {
+				return nil, fmt.Errorf("%s remoteServers[%d]: %w", profileLabel(profile), index, splitErr)
+			}
+			address = net.JoinHostPort(host, strconv.Itoa(configured.Port))
+		}
+		servers = append(servers, remote.Server{Address: address, User: configured.Username, Password: configured.Password})
+	}
+	if len(servers) == 0 {
+		return nil, fmt.Errorf("%s has no remoteServers", profileLabel(profile))
+	}
+	return servers, nil
+}
+
+func sameProfile(left, right domain.Profile) bool {
+	if left.Path != "" && right.Path != "" {
+		return strings.EqualFold(filepath.Clean(left.Path), filepath.Clean(right.Path))
+	}
+	return strings.EqualFold(left.System, right.System) && strings.EqualFold(left.Name, right.Name)
+}
+
+func profileLabel(profile domain.Profile) string {
+	if profile.System == "" {
+		return profile.Name
+	}
+	return profile.System + "/" + profile.Name
 }
 
 func (m *model) toggleCurrent() {
@@ -794,7 +955,7 @@ func (m *model) refreshPlan() {
 }
 
 func (m *model) selectedProfile() domain.Profile {
-	profile := domain.Profile{APIVersion: "syssetup/v1", Name: m.profile.Name}
+	profile := domain.Profile{APIVersion: "syssetup/v1", Name: m.profile.Name, System: m.profile.System, Path: m.profile.Path}
 	ids := make([]string, 0, len(m.selected))
 	for id, selected := range m.selected {
 		if selected {
@@ -806,6 +967,20 @@ func (m *model) selectedProfile() domain.Profile {
 		profile.Features = append(profile.Features, domain.FeatureSelection{ID: id, Parameters: m.profileParameters[id]})
 	}
 	return profile
+}
+
+func (m *model) toggleReportFormat() {
+	if m.running || m.remoteRunning {
+		m.notice = "Wait for the current run before changing report format"
+		return
+	}
+	if m.reportFormat == runreport.HTML {
+		m.reportFormat = runreport.Markdown
+	} else {
+		m.reportFormat = runreport.HTML
+	}
+	m.options.ReportFormat = string(m.reportFormat)
+	m.notice = "Report format: " + strings.ToUpper(string(m.reportFormat))
 }
 
 func (m *model) startRun() tea.Cmd {
@@ -820,6 +995,7 @@ func (m *model) startRun() tea.Cmd {
 	m.refreshRows()
 	m.runErr = nil
 	m.running = true
+	m.runStartedAt = time.Now()
 	m.notice = fmt.Sprintf("Running %d feature(s)...", len(m.resolved))
 	m.activeTab = tabLogs
 	m.activeOutput = &safeBuffer{}
@@ -828,6 +1004,13 @@ func (m *model) startRun() tea.Cmd {
 	options := m.options
 	options.Output = m.activeOutput
 	return tea.Batch(m.spinner.Tick, logTickCmd(), runFeaturesCmd(runContext, m.resolved, options, m.activeOutput))
+}
+
+func reportNotice(base, path string, err error) string {
+	if err != nil {
+		return base + "; report failed: " + err.Error()
+	}
+	return base + "; report: " + path
 }
 
 func runFeaturesCmd(ctx context.Context, features []domain.ResolvedFeature, options runner.Options, output *safeBuffer) tea.Cmd {
@@ -886,6 +1069,7 @@ func (m *model) refreshProfileRows() {
 	for index, profile := range m.profiles {
 		rows = append(rows, table.Row{
 			fmt.Sprintf("%d", index+1),
+			profile.System,
 			profile.Name,
 			fmt.Sprintf("%d", len(profile.Features)),
 		})
@@ -963,7 +1147,8 @@ func (m *model) resize(width, height int) {
 	m.profileTable.SetHeight(max(contentHeight-2, 3))
 	m.profileTable.SetColumns([]table.Column{
 		{Title: "#", Width: 4},
-		{Title: "PROFILE", Width: max(leftWidth-18, 18)},
+		{Title: "SYSTEM", Width: max(min(leftWidth/4, 20), 10)},
+		{Title: "PROFILE", Width: max(leftWidth-max(min(leftWidth/4, 20), 10)-18, 12)},
 		{Title: "FEATURES", Width: 10},
 	})
 	rightWidth := m.width - leftWidth - 1

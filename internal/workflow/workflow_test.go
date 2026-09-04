@@ -57,6 +57,33 @@ func TestLoadAndDeriveGatewayArguments(t *testing.T) {
 	}
 }
 
+func TestDeriveArgumentsByIndex(t *testing.T) {
+	index := 0
+	step := Step{
+		ID: "verify",
+		DeriveArgs: &DeriveArgs{
+			Step:          "vlan",
+			ArgumentIndex: &index,
+			RequireEach:   true,
+		},
+	}
+	config := Config{Steps: map[string][]Invocation{
+		"vlan": {
+			{Args: []string{"bond2.306", "ip=10.0.36.87"}},
+			{Args: []string{"bond2.307", "ip=10.0.37.87"}},
+			{Args: []string{"bond2.306", "ip=10.0.36.88"}},
+		},
+	}}
+	got, err := deriveInvocations(step, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Invocation{{Args: []string{"bond2.306", "bond2.307"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("derived invocations = %#v, want %#v", got, want)
+	}
+}
+
 func TestLoadRejectsStepDependingOnLaterStep(t *testing.T) {
 	featuresRoot := t.TempDir()
 	writeRemoteFeature(t, featuresRoot, "first")
@@ -102,7 +129,7 @@ func TestBundledPrepareSetupDeployWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []Invocation{{Args: []string{"10.0.36.254"}}}
+	want := []Invocation{{Args: []string{"bond2.306"}}}
 	if !reflect.DeepEqual(verifyInvocations, want) {
 		t.Fatalf("verify-network arguments = %#v, want %#v", verifyInvocations, want)
 	}

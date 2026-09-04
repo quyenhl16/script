@@ -48,7 +48,8 @@ func (m *model) headerView() string {
 		modeStyle = noticeStyle
 	}
 	left := brandStyle.Render("SYSSETUP") + "  " + contextStyle.Render("RHEL FEATURE DASHBOARD")
-	right := fmt.Sprintf("Profile: %s  Selected: %d  Mode: %s", m.profile.Name, m.selectedCount(), modeStyle.Render(mode))
+	right := fmt.Sprintf("Profile: %s  Selected: %d  Mode: %s  Report: %s",
+		profileLabel(m.profile), m.selectedCount(), modeStyle.Render(mode), strings.ToUpper(string(m.reportFormat)))
 	space := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return left + strings.Repeat(" ", space) + right
 }
@@ -95,9 +96,14 @@ func (m *model) sshView(height int) string {
 	for _, input := range activeInputs {
 		formLines = append(formLines, m.sshInputs[input].View())
 	}
+	if m.serverSource != "" {
+		formLines = append(formLines, contextStyle.Render(fmt.Sprintf("Loaded: %d server(s) from %s", len(m.profileServers), m.serverSource)))
+	}
 	formLines = append(formLines,
 		"",
 		mutedStyle.Render("Servers: comma/space separated host[:port]; default port is 22."),
+		mutedStyle.Render("F3 loads all servers and credentials from this system's base-server profile."),
+		mutedStyle.Render("Manually entered server/user/password fields take precedence."),
 		mutedStyle.Render("Password stays in memory and is never written to logs."),
 		mutedStyle.Render("Host keys use trust-on-first-use and changed keys are rejected."),
 	)
@@ -106,7 +112,7 @@ func (m *model) sshView(height int) string {
 		if m.sshMode == sshScript {
 			visibleFields = 8
 		}
-		formLines = append(formLines[:visibleFields], "", mutedStyle.Render("Comma-separated host[:port]; F2 mode, F5 run."))
+		formLines = append(formLines[:visibleFields], "", mutedStyle.Render("F2 mode · F3 servers · F4 report · F5 run."))
 	}
 	formWidth := m.width - 2
 	if m.width >= 100 {
@@ -170,6 +176,9 @@ func (m *model) profileDetailView() string {
 	lines := []string{
 		panelTitleStyle.Render(profile.Name),
 		mutedStyle.Render(profile.Description),
+		"",
+		keyStyle.Render("System") + "   " + valueStyle.Render(profile.System),
+		keyStyle.Render("Servers") + "  " + valueStyle.Render(fmt.Sprintf("%d", len(profile.RemoteServers))),
 		"",
 		keyStyle.Render("Features"),
 	}
@@ -382,15 +391,17 @@ func (m *model) footerView() string {
 		return strings.Join([]string{
 			keyStyle.Render("tab/↑↓") + " field",
 			keyStyle.Render("F2") + " command/script/workflow",
+			keyStyle.Render("F3") + " load base-server",
+			keyStyle.Render("F4") + " report " + strings.ToUpper(string(m.reportFormat)),
 			keyStyle.Render("F5") + " run",
 			keyStyle.Render("esc") + " navigation",
 		}, "  ")
 	}
 	if m.activeTab == tabWorkflows {
-		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load workflow  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
+		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load workflow  " + keyStyle.Render("F4") + " report format  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
 	}
 	if m.activeTab == tabProfiles {
-		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load profile  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
+		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load profile  " + keyStyle.Render("F4") + " report format  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
 	}
 	items := []string{
 		keyStyle.Render("j/k") + " move",
@@ -398,6 +409,7 @@ func (m *model) footerView() string {
 		keyStyle.Render("space") + " select",
 		keyStyle.Render("/") + " filter",
 		keyStyle.Render("r") + " run",
+		keyStyle.Render("F4") + " report " + strings.ToUpper(string(m.reportFormat)),
 		keyStyle.Render("tab") + " view",
 		keyStyle.Render("?") + " help",
 		keyStyle.Render("q") + " quit",
@@ -424,7 +436,8 @@ func (m *model) helpView() string {
 		keyStyle.Render("tab / shift+tab") + " Switch dashboard view",
 		keyStyle.Render("r") + "               Execute the current plan",
 		keyStyle.Render("c") + "               Cancel the running plan",
-		keyStyle.Render("F2 / F5") + "         SSH mode / run remote task",
+		keyStyle.Render("F2 / F3 / F5") + "    SSH mode / load base-server / run",
+		keyStyle.Render("F4") + "              Toggle Markdown / HTML report",
 		keyStyle.Render("? / esc") + "         Close this help",
 		keyStyle.Render("q / ctrl+c") + "      Quit",
 	}, "\n")
