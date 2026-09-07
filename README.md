@@ -43,6 +43,84 @@ Kiểm tra VIP, OSPF và kết nối mạng của workload Kubernetes `pramf01`:
 phạm vi kiểm tra. Namespace, VIP và địa chỉ NF đích đều có thể cấu hình trong
 `parameters` của feature `k8s-connectivity-check`.
 
+Trong phase `ping`, các tham số `ip_ausf`, `ip_udm`, `ip_smf`,
+`ip_amf_remote`, `ip_nrf` và `ip_gnodeb` chấp nhận một hoặc nhiều IPv4, phân
+cách bằng dấu phẩy hoặc khoảng trắng. Mỗi MM pod sẽ ping từng địa chỉ NF; mỗi
+IPGW pod sẽ ping từng địa chỉ gNodeB. Cấu hình một IP cũ vẫn được hỗ trợ:
+
+```json
+{
+  "ip_ausf": "192.0.2.10, 192.0.2.11",
+  "ip_udm": "192.0.2.20 192.0.2.21",
+  "ip_gnodeb": "198.51.100.10, 198.51.100.11"
+}
+```
+
+Kiểm tra danh sách service bắt buộc của namespace `pramf01` và kết nối đến mọi
+cổng TCP qua ClusterIP (hoặc endpoint IP đối với headless service):
+
+```bash
+./bin/syssetup plan --profile profiles/01HTX/pramf01-services.json
+./bin/syssetup run --profile profiles/01HTX/pramf01-services.json
+```
+
+Feature `k8s-service-check` dùng `curl` với giao thức telnet để chỉ kiểm tra bắt
+tay TCP, không yêu cầu dịch vụ phải chạy HTTP. Nếu không có `curl`, feature dùng
+`telnet` kết hợp `timeout`. Mặc định `probe_targets` là `all`, nên cả ClusterIP và
+External IP đều được kiểm tra; đặt thành `cluster` hoặc `external` để giới hạn
+phạm vi. Headless service không có IP ảo được kiểm tra qua từng endpoint IP. UDP,
+SCTP và service không khai báo port chỉ được kiểm tra sự tồn tại. Tham số
+`services` nhận tên phân cách bằng dấu phẩy hoặc khoảng trắng; đặt `tcp_probe`
+thành `false` nếu chỉ muốn kiểm tra tên service.
+
+Kiểm tra environment của Deployment, StatefulSet và DaemonSet theo ma trận Excel:
+
+```bash
+cp /path/to/pramf01-input_100K.xlsx .
+./bin/syssetup plan --profile profiles/01HTX/pramf01-env-check.json
+./bin/syssetup run --profile profiles/01HTX/pramf01-env-check.json
+```
+
+Feature `k8s-env-check` đọc sheet `VDU`: cột B chứa thuộc tính bắt đầu bằng
+`environments_`, cột C chứa tên ENV Kubernetes chính xác, và các cột từ D trở đi
+chứa giá trị kỳ vọng của từng component. Ô trống nghĩa là ENV không áp dụng;
+`<PRESENT>` chỉ kiểm tra sự tồn tại, `<EMPTY>` yêu cầu giá trị rỗng,
+`<REGEX:...>` kiểm tra bằng biểu thức chính quy, còn
+`<SECRET:name/key>`/`<CONFIGMAP:name/key>` kiểm tra nguồn tham chiếu mà không ghi
+giá trị nhạy cảm ra output.
+
+Tên component được tự đổi `_` thành `-` và đối chiếu với workload/container. Nếu
+không thể suy luận duy nhất, cấu hình `mapping_file` theo mẫu
+`checks/k8s-env/workload-map.example.json`. Feature resolve cả `env`, `envFrom`,
+ConfigMap và Secret từ Pod template. Giá trị Secret chỉ tồn tại trong bộ nhớ và
+không được in ra report. `extra_policy` nhận `warn`, `fail` hoặc `ignore`; có thể
+dùng `ignore_extra` cho các glob như `POD_*`.
+
+Các ô công thức Excel sử dụng cached value đã lưu trong workbook. Hãy recalculate
+và save file bằng Excel trước khi chạy; công thức không có cached value sẽ bị từ
+chối để tránh so sánh dữ liệu cũ hoặc rỗng.
+
+Kiểm tra CPU và memory request/limit của workload theo cùng file Excel:
+
+```bash
+./bin/syssetup plan --profile profiles/01HTX/pramf01-resource-check.json
+./bin/syssetup run --profile profiles/01HTX/pramf01-resource-check.json
+```
+
+Feature `k8s-resource-check` đọc các thuộc tính `mem_size`, `num_cpus`,
+`mem_size_limit`, `num_cpus_limit`, `init_resources_cpu` và
+`init_resources_mem` trong cột B. Giá trị số trần mặc định được hiểu là `Mi` cho
+memory và `m` cho CPU; các Kubernetes quantity tương đương như `4096Mi`/`4Gi`
+hay `2000m`/`2` được coi là bằng nhau. Resource chính được đối chiếu với
+`containers[].resources`; resource init chỉ được kiểm tra khi Excel có giá trị
+`init_resources_*`.
+
+Tên workload/container được tự suy luận như `k8s-env-check`. Với workload có
+nhiều container hoặc init container, dùng `mapping_file` theo mẫu
+`checks/k8s-resource/workload-map.example.json`. `extra_policy` nhận `warn`,
+`fail` hoặc `ignore`; `ignore_extra` nhận glob của đường dẫn resource, ví dụ
+`container.requests.hugepages-*`.
+
 Hoặc:
 
 ```bash

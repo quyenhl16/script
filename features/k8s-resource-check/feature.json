@@ -1,0 +1,74 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "k8s-resource-check",
+  "name": "Kubernetes resource check",
+  "version": "1.0.0",
+  "description": "Compare Kubernetes container resource requests and limits with an Excel baseline",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 900,
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "input_file": {
+      "type": "string",
+      "description": "Excel .xlsx baseline containing per-component resources",
+      "required": true
+    },
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace containing the workloads",
+      "default": "pramf01"
+    },
+    "sheet": {
+      "type": "string",
+      "description": "Excel worksheet containing the resource matrix",
+      "default": "VDU"
+    },
+    "header_row": {
+      "type": "integer",
+      "description": "One-based Excel row containing component names",
+      "default": 1
+    },
+    "attribute_column": {
+      "type": "string",
+      "description": "Excel column containing resource attribute names",
+      "default": "B"
+    },
+    "service_start_column": {
+      "type": "string",
+      "description": "First Excel column containing per-component resource values",
+      "default": "D"
+    },
+    "mapping_file": {
+      "type": "string",
+      "description": "Optional JSON mapping from Excel components to workload and container names",
+      "default": ""
+    },
+    "cpu_default_unit": {
+      "type": "string",
+      "description": "Unit applied to bare CPU values in Excel",
+      "default": "m"
+    },
+    "memory_default_unit": {
+      "type": "string",
+      "description": "Unit applied to bare memory values in Excel",
+      "default": "Mi"
+    },
+    "extra_policy": {
+      "type": "string",
+      "description": "How to handle deployed resources absent from Excel: fail, warn or ignore",
+      "default": "warn"
+    },
+    "ignore_extra": {
+      "type": "string",
+      "description": "Optional comma or space separated glob patterns for extra resource paths",
+      "default": ""
+    },
+    "show_pass": {
+      "type": "boolean",
+      "description": "Print every matching resource instead of only differences",
+      "default": false
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "apiVersion": "syssetup/k8s-resource-map/v1",
+  "components": {
+    "aerospike": {
+      "kind": "StatefulSet",
+      "name": "aerospike",
+      "container": "aerospike",
+      "initContainer": "aerospike-init"
+    },
+    "mm_controller": {
+      "kind": "StatefulSet",
+      "name": "mm-controller",
+      "container": "mm-controller"
+    }
+  }
+}

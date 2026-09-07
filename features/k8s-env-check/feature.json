@@ -1,0 +1,79 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "k8s-env-check",
+  "name": "Kubernetes environment check",
+  "version": "1.0.0",
+  "description": "Compare Kubernetes workload environments with an Excel baseline",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 900,
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "input_file": {
+      "type": "string",
+      "description": "Excel .xlsx baseline containing service environment values",
+      "required": true
+    },
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace containing the workloads",
+      "default": "pramf01"
+    },
+    "sheet": {
+      "type": "string",
+      "description": "Excel worksheet containing the environment matrix",
+      "default": "VDU"
+    },
+    "header_row": {
+      "type": "integer",
+      "description": "One-based Excel row containing service names",
+      "default": 1
+    },
+    "attribute_column": {
+      "type": "string",
+      "description": "Excel column containing environments_* attributes",
+      "default": "B"
+    },
+    "env_name_column": {
+      "type": "string",
+      "description": "Excel column containing exact Kubernetes ENV names",
+      "default": "C"
+    },
+    "service_start_column": {
+      "type": "string",
+      "description": "First Excel column containing per-service values",
+      "default": "D"
+    },
+    "attribute_prefix": {
+      "type": "string",
+      "description": "Only Excel attributes with this prefix are environment rows",
+      "default": "environments_"
+    },
+    "mapping_file": {
+      "type": "string",
+      "description": "Optional JSON mapping from Excel service columns to workload/container names",
+      "default": ""
+    },
+    "compare_values": {
+      "type": "boolean",
+      "description": "Compare expected and deployed values in addition to ENV presence",
+      "default": true
+    },
+    "extra_policy": {
+      "type": "string",
+      "description": "How to handle deployed ENVs absent from Excel: fail, warn or ignore",
+      "default": "warn"
+    },
+    "ignore_extra": {
+      "type": "string",
+      "description": "Optional comma or space separated glob patterns for extra ENVs",
+      "default": ""
+    },
+    "show_pass": {
+      "type": "boolean",
+      "description": "Print every matching ENV instead of only differences",
+      "default": false
+    }
+  }
+}

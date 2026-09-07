@@ -63,9 +63,43 @@ validate_ipv4() {
   done
 }
 
+validate_ipv4_list() {
+  local name="$1"
+  local value="$2"
+  local address
+  local normalized="${value//,/ }"
+  local -a addresses
+
+  read -r -a addresses <<< "$normalized"
+  if ((${#addresses[@]} == 0)); then
+    printf 'IPv4 list for %s must not be empty\n' "$name" >&2
+    return 1
+  fi
+  for address in "${addresses[@]}"; do
+    if ! validate_ipv4 "$address"; then
+      printf 'Invalid IPv4 value in %s: %q\n' "$name" "$address" >&2
+      return 1
+    fi
+  done
+}
+
 validate_configuration() {
   local name
   local value
+  local setting
+  local -a single_ip_settings=(
+    "vip_comm=$vip_comm"
+    "vip_ipgw=$vip_ipgw"
+    "vip_gtp=$vip_gtp"
+  )
+  local -a ip_list_settings=(
+    "ip_ausf=$ip_ausf"
+    "ip_udm=$ip_udm"
+    "ip_smf=$ip_smf"
+    "ip_amf_remote=$ip_amf_remote"
+    "ip_nrf=$ip_nrf"
+    "ip_gnodeb=$ip_gnodeb"
+  )
 
   case "$phase" in
     vip|ospf|ping|all) ;;
@@ -80,22 +114,20 @@ validate_configuration() {
     return 2
   fi
 
-  while IFS='=' read -r name value; do
+  for setting in "${single_ip_settings[@]}"; do
+    name="${setting%%=*}"
+    value="${setting#*=}"
     if ! validate_ipv4 "$value"; then
       printf 'Invalid IPv4 value for %s: %q\n' "$name" "$value" >&2
       return 2
     fi
-  done <<EOF
-vip_comm=$vip_comm
-vip_ipgw=$vip_ipgw
-vip_gtp=$vip_gtp
-ip_ausf=$ip_ausf
-ip_udm=$ip_udm
-ip_smf=$ip_smf
-ip_amf_remote=$ip_amf_remote
-ip_nrf=$ip_nrf
-ip_gnodeb=$ip_gnodeb
-EOF
+  done
+
+  for setting in "${ip_list_settings[@]}"; do
+    name="${setting%%=*}"
+    value="${setting#*=}"
+    validate_ipv4_list "$name" "$value" || return 2
+  done
 }
 
 preflight() {
@@ -193,9 +225,11 @@ phase_check_connectivity() {
   local nf_name
   local target_ip
   local prober_mm_pod=''
+  local -a gnodeb_targets
   local -a ipgw_pods
   local -a mm_pods
   local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF)
+  local -a target_ips
   declare -A nf_targets=(
     [AUSF]="$ip_ausf"
     [UDM]="$ip_udm"
@@ -212,16 +246,19 @@ phase_check_connectivity() {
 
   printf '\n%s 3.1 N2: IPGW VIP -> gNodeB%s\n' "$yellow" "$reset"
   mapfile -t ipgw_pods < <(get_running_pods ipgw)
+  read -r -a gnodeb_targets <<< "${ip_gnodeb//,/ }"
   if ((${#ipgw_pods[@]} == 0)); then
     fail 'No running IPGW pod found'
   else
     for pod in "${ipgw_pods[@]}"; do
-      if kubectl exec -n "$namespace" "$pod" -- \
-        sudo -n ping -c 2 -W 2 -I "$vip_ipgw" "$ip_gnodeb" >/dev/null 2>&1; then
-        pass "Pod [$pod]: $vip_ipgw -> gNodeB $ip_gnodeb"
-      else
-        fail "Pod [$pod]: $vip_ipgw cannot reach gNodeB $ip_gnodeb"
-      fi
+      for target_ip in "${gnodeb_targets[@]}"; do
+        if kubectl exec -n "$namespace" "$pod" -- \
+          sudo -n ping -c 2 -W 2 -I "$vip_ipgw" "$target_ip" >/dev/null 2>&1; then
+          pass "Pod [$pod]: $vip_ipgw -> gNodeB $target_ip"
+        else
+          fail "Pod [$pod]: $vip_ipgw cannot reach gNodeB $target_ip"
+        fi
+      done
     done
   fi
 
@@ -250,12 +287,15 @@ phase_check_connectivity() {
     for pod in "${mm_pods[@]}"; do
       printf '  Pod: [%s]\n' "$pod"
       for nf_name in "${nf_names[@]}"; do
-        target_ip="${nf_targets[$nf_name]}"
-        if ping_from_pod "$pod" "$target_ip"; then
-          pass "Path to $nf_name ($target_ip) is reachable"
-        else
-          fail "Path to $nf_name ($target_ip) is unreachable"
-        fi
+        target_ips=()
+        read -r -a target_ips <<< "${nf_targets[$nf_name]//,/ }"
+        for target_ip in "${target_ips[@]}"; do
+          if ping_from_pod "$pod" "$target_ip"; then
+            pass "Pod [$pod]: path to $nf_name ($target_ip) is reachable"
+          else
+            fail "Pod [$pod]: path to $nf_name ($target_ip) is unreachable"
+          fi
+        done
       done
     done
   fi

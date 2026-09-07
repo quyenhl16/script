@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Audit pod VIPs, OSPF adjacencies and 5G network connectivity",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
@@ -37,32 +37,32 @@
     },
     "ip_ausf": {
       "type": "string",
-      "description": "Remote AUSF IP",
+      "description": "Remote AUSF IPv4 list, separated by commas or spaces",
       "default": "68.240.36.153"
     },
     "ip_udm": {
       "type": "string",
-      "description": "Remote UDM IP",
+      "description": "Remote UDM IPv4 list, separated by commas or spaces",
       "default": "68.240.36.153"
     },
     "ip_smf": {
       "type": "string",
-      "description": "Remote SMF IP",
+      "description": "Remote SMF IPv4 list, separated by commas or spaces",
       "default": "68.240.36.105"
     },
     "ip_amf_remote": {
       "type": "string",
-      "description": "Remote AMF IP",
+      "description": "Remote AMF IPv4 list, separated by commas or spaces",
       "default": "68.240.36.9"
     },
     "ip_nrf": {
       "type": "string",
-      "description": "Remote NRF IP",
+      "description": "Remote NRF IPv4 list, separated by commas or spaces",
       "default": "68.240.36.193"
     },
     "ip_gnodeb": {
       "type": "string",
-      "description": "gNodeB IP",
+      "description": "gNodeB IPv4 list, separated by commas or spaces",
       "default": "69.69.0.150"
     }
   }

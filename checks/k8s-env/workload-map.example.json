@@ -1,0 +1,15 @@
+{
+  "apiVersion": "syssetup/k8s-env-map/v1",
+  "components": {
+    "mm_controller": {
+      "kind": "Deployment",
+      "name": "mm-controller",
+      "container": "mm-controller"
+    },
+    "redis_sentinel": {
+      "kind": "StatefulSet",
+      "name": "redis-sentinel",
+      "container": "redis-sentinel"
+    }
+  }
+}

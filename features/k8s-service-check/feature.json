@@ -1,0 +1,39 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "k8s-service-check",
+  "name": "Kubernetes service check",
+  "version": "1.0.0",
+  "description": "Verify required Kubernetes services and probe their TCP ports",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 900,
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace containing the required services",
+      "default": "pramf01"
+    },
+    "services": {
+      "type": "string",
+      "description": "Required service names, separated by commas or spaces",
+      "default": "aerospike comm-sbi dns dns-http ebm-svc-udp gtp-http mm mm-controller-external mm-controller-internal netconf nm-loadbalancer-svc nm-postgres nm-postgres-config nm-postgres-repl redis redis-sentinel sctp-http sctp-sctp-field"
+    },
+    "tcp_probe": {
+      "type": "boolean",
+      "description": "Probe every TCP service port after checking service existence",
+      "default": true
+    },
+    "probe_targets": {
+      "type": "string",
+      "description": "TCP targets to probe: cluster, external or all",
+      "default": "all"
+    },
+    "connect_timeout": {
+      "type": "integer",
+      "description": "TCP connection timeout in seconds",
+      "default": 3
+    }
+  }
+}
