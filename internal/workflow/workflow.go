@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -356,12 +357,16 @@ func deriveArgsSelector(derive DeriveArgs) string {
 	return fmt.Sprintf("argument with prefix %q", derive.Prefix)
 }
 
-func (r *Registry) Execute(ctx context.Context, definition Definition, config Config, servers []remote.Server, hostKeys ssh.HostKeyCallback) (Execution, error) {
+func (r *Registry) Execute(ctx context.Context, definition Definition, config Config, servers []remote.Server, hostKeys ssh.HostKeyCallback, liveOutputs ...io.Writer) (Execution, error) {
 	if err := r.ValidateConfig(definition, config); err != nil {
 		return Execution{}, err
 	}
+	liveOutput := io.Discard
+	if len(liveOutputs) > 0 && liveOutputs[0] != nil {
+		liveOutput = liveOutputs[0]
+	}
 	if definition.ExecutionMode == "local" {
-		return r.executeLocal(ctx, definition, config)
+		return r.executeLocal(ctx, definition, config, liveOutput)
 	}
 	prepared := make([]preparedStep, 0, len(definition.Steps))
 	for _, step := range definition.Steps {
@@ -452,7 +457,7 @@ func executeServer(ctx context.Context, server remote.Server, steps []preparedSt
 	return result
 }
 
-func (r *Registry) executeLocal(ctx context.Context, definition Definition, config Config) (Execution, error) {
+func (r *Registry) executeLocal(ctx context.Context, definition Definition, config Config, liveOutput io.Writer) (Execution, error) {
 	execution := Execution{Servers: []ServerResult{{Address: "local", Success: true}}}
 	halted := false
 	for _, step := range definition.Steps {
@@ -469,6 +474,7 @@ func (r *Registry) executeLocal(ctx context.Context, definition Definition, conf
 		}
 		for invocationIndex, invocation := range invocations {
 			started := time.Now()
+			fmt.Fprintf(liveOutput, "\n==> [%s.%d] %s\n", step.ID, invocationIndex+1, step.Feature)
 			environment, err := localArtifactEnvironment(config.Directory, invocation.Artifacts)
 			if err != nil {
 				execution.Servers[0].Success = false
@@ -478,18 +484,21 @@ func (r *Registry) executeLocal(ctx context.Context, definition Definition, conf
 					Invocation: invocationIndex + 1, Status: StatusFailed,
 					Duration: time.Since(started), Err: fmt.Errorf("load artifacts: %w", err),
 				})
+				fmt.Fprintf(liveOutput, "[FAIL] %s.%d: %v\n", step.ID, invocationIndex+1, err)
 				if halted {
 					break
 				}
 				continue
 			}
+			environment = append(environment, "PYTHONUNBUFFERED=1")
 			runContext, cancel := context.WithTimeout(ctx, time.Duration(feature.TimeoutSeconds)*time.Second)
 			arguments := append([]string{"bash", filepath.Join(feature.Directory, feature.Entrypoint)}, invocation.Args...)
 			command := exec.CommandContext(runContext, "/usr/bin/env", arguments...)
 			command.Env = mergeEnvironment(os.Environ(), environment)
 			var output bytes.Buffer
-			command.Stdout = &output
-			command.Stderr = &output
+			stream := io.MultiWriter(&output, liveOutput)
+			command.Stdout = stream
+			command.Stderr = stream
 			runErr := command.Run()
 			if runContext.Err() == context.DeadlineExceeded {
 				runErr = fmt.Errorf("timed out after %s", time.Duration(feature.TimeoutSeconds)*time.Second)
@@ -507,6 +516,11 @@ func (r *Registry) executeLocal(ctx context.Context, definition Definition, conf
 				Invocation: invocationIndex + 1, Status: status, Output: output.String(),
 				Duration: time.Since(started), Err: runErr,
 			})
+			if runErr != nil {
+				fmt.Fprintf(liveOutput, "[FAIL] %s.%d (%s): %v\n", step.ID, invocationIndex+1, time.Since(started).Round(time.Millisecond), runErr)
+			} else {
+				fmt.Fprintf(liveOutput, "[DONE] %s.%d (%s)\n", step.ID, invocationIndex+1, time.Since(started).Round(time.Millisecond))
+			}
 			if halted {
 				break
 			}

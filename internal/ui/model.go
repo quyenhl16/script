@@ -314,6 +314,7 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case workflowFinishedMsg:
 		m.remoteRunning = false
 		m.cancelRemote = nil
+		m.activeOutput = nil
 		m.remoteErr = msg.err
 		var output strings.Builder
 		for _, result := range msg.execution.Results {
@@ -365,11 +366,14 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.notice = reportNotice(m.notice, reportPath, reportErr)
 		return m, nil
 	case logTickMsg:
-		if m.activeOutput != nil {
+		if m.running && m.activeOutput != nil {
 			m.logs.SetContent(m.activeOutput.String())
 			m.logs.GotoBottom()
+		} else if m.remoteRunning && m.activeWorkflow.ExecutionMode == "local" && m.activeOutput != nil {
+			m.sshOutput.SetContent(m.activeOutput.String())
+			m.sshOutput.GotoBottom()
 		}
-		if m.running {
+		if m.running || (m.remoteRunning && m.activeWorkflow.ExecutionMode == "local") {
 			return m, logTickCmd()
 		}
 		return m, nil
@@ -792,7 +796,15 @@ func (m *model) startWorkflowRun() tea.Cmd {
 	m.sshOutput.SetContent("Starting workflow...")
 	runContext, cancel := context.WithCancel(m.ctx)
 	m.cancelRemote = cancel
-	return tea.Batch(m.spinner.Tick, runWorkflowCmd(runContext, m.workflowRegistry, definition, config, servers, hostKeys))
+	var liveOutput *safeBuffer
+	commands := []tea.Cmd{m.spinner.Tick}
+	if definition.ExecutionMode == "local" {
+		liveOutput = &safeBuffer{}
+		m.activeOutput = liveOutput
+		commands = append(commands, logTickCmd())
+	}
+	commands = append(commands, runWorkflowCmd(runContext, m.workflowRegistry, definition, config, servers, hostKeys, liveOutput))
+	return tea.Batch(commands...)
 }
 
 func runRemoteCmd(ctx context.Context, request remote.Request) tea.Cmd {
@@ -801,9 +813,9 @@ func runRemoteCmd(ctx context.Context, request remote.Request) tea.Cmd {
 	}
 }
 
-func runWorkflowCmd(ctx context.Context, workflows *workflow.Registry, definition workflow.Definition, config workflow.Config, servers []remote.Server, hostKeys ssh.HostKeyCallback) tea.Cmd {
+func runWorkflowCmd(ctx context.Context, workflows *workflow.Registry, definition workflow.Definition, config workflow.Config, servers []remote.Server, hostKeys ssh.HostKeyCallback, liveOutput *safeBuffer) tea.Cmd {
 	return func() tea.Msg {
-		execution, err := workflows.Execute(ctx, definition, config, servers, hostKeys)
+		execution, err := workflows.Execute(ctx, definition, config, servers, hostKeys, liveOutput)
 		return workflowFinishedMsg{execution: execution, err: err}
 	}
 }

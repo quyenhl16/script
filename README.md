@@ -176,10 +176,11 @@ Workflow `post-deployment-validation` chạy tuần tự trên máy local sau kh
 thống Kubernetes đã lên:
 
 ```text
-1. k8s-service-check
-2. k8s-resource-check   sau service-check
-3. k8s-env-check        sau resource-check
-4. k8s-connectivity-check sau env-check
+1. check-os              kiểm tra OS và dependency
+2. k8s-service-check     sau check-os
+3. k8s-resource-check    sau service-check
+4. k8s-env-check         sau resource-check
+5. k8s-connectivity-check sau env-check
 ```
 
 Trước khi chạy, đặt file Excel baseline đúng đường dẫn:
@@ -192,7 +193,8 @@ Mở tab `5 Workflows`, chọn `post-deployment-validation` rồi nhấn `F5`; w
 chạy local và không yêu cầu server, user hoặc password SSH. Máy đang chạy
 `syssetup` cần truy cập được namespace `pramf01` bằng `kubectl`, đồng thời có
 `python3`, `curl` hoặc `telnet` theo loại kiểm tra. Nếu một bước lỗi, workflow vẫn
-ghi nhận lỗi và tiếp tục chạy các bước còn lại.
+ghi nhận lỗi và tiếp tục chạy các bước còn lại. Output `stdout`/`stderr` của step
+đang chạy được cập nhật trực tiếp trong khung `Local workflow results`.
 
 ## TUI dashboard
 
@@ -206,8 +208,8 @@ TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
 - `Logs`: output cập nhật trong lúc runner hoạt động.
 - `Remote SSH`: nhập danh sách server, user, password để chạy Linux command
   hoặc gửi một script cục bộ lên nhiều server qua SSH.
-- `Workflows`: danh sách quy trình nhiều step; mỗi server chạy tuần tự theo
-  dependency trong khi các server vẫn được xử lý song song.
+- `Workflows`: danh sách quy trình nhiều step; hỗ trợ chạy local hoặc tuần tự
+  trên từng server remote theo dependency.
 - `Profiles`: khám phá đệ quy `profiles/<system>/*.json`, hiển thị cột hệ thống;
   chọn profile bằng `Enter` để
   thay selection và parameters ngay trong TUI mà không cần khởi động lại.

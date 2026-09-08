@@ -366,6 +366,7 @@ func TestLocalWorkflowStartsWithoutSSHServer(t *testing.T) {
 	}
 
 	m := newModelWithWorkflows(context.Background(), features, workflowRegistry, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	m.resize(120, 30)
 	m.loadCurrentWorkflow()
 	m.sshInputs[sshWorkflowConfig].SetValue(configPath)
 	if got := m.sshFieldOrder(); len(got) != 1 || got[0] != sshWorkflowConfig {
@@ -376,6 +377,13 @@ func TestLocalWorkflowStartsWithoutSSHServer(t *testing.T) {
 	}
 	if m.remoteErr != nil || !m.remoteRunning || !strings.Contains(m.notice, "locally") {
 		t.Fatalf("local workflow state: running=%t notice=%q err=%v", m.remoteRunning, m.notice, m.remoteErr)
+	}
+	if _, err := m.activeOutput.Write([]byte("live-step-output\n")); err != nil {
+		t.Fatal(err)
+	}
+	m.Update(logTickMsg{})
+	if output := m.sshOutput.View(); !strings.Contains(output, "live-step-output") {
+		t.Fatalf("live workflow output was not rendered: %q", output)
 	}
 }
 

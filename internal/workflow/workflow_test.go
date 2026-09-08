@@ -1,11 +1,13 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -159,6 +161,7 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 		t.Fatalf("executionMode = %q, want local", definition.ExecutionMode)
 	}
 	wantFeatures := []string{
+		"check-os",
 		"k8s-service-check",
 		"k8s-resource-check",
 		"k8s-env-check",
@@ -226,7 +229,8 @@ func TestLocalWorkflowNeedsNoServerAndContinuesAfterArtifactFailure(t *testing.T
 		"second": {{Args: []string{"verify"}, Artifacts: missingArtifact}},
 	}}
 
-	execution, err := workflows.executeLocal(context.Background(), definition, config)
+	var liveOutput bytes.Buffer
+	execution, err := workflows.executeLocal(context.Background(), definition, config, &liveOutput)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,6 +244,9 @@ func TestLocalWorkflowNeedsNoServerAndContinuesAfterArtifactFailure(t *testing.T
 		if result.Status != StatusFailed || result.Err == nil {
 			t.Fatalf("result %d = %#v, want failed artifact result", index, result)
 		}
+	}
+	if output := liveOutput.String(); !strings.Contains(output, "==> [first.1]") || !strings.Contains(output, "[FAIL] second.1") {
+		t.Fatalf("live output did not include step progress: %q", output)
 	}
 }
 

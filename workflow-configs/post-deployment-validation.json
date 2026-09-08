@@ -2,6 +2,17 @@
   "apiVersion": "syssetup/workflow-config/v1",
   "workflow": "post-deployment-validation",
   "steps": {
+    "dependency-check": [
+      {
+        "args": [
+          "verify",
+          "required_commands=bash python3 kubectl grep sed",
+          "minimum_bash_major=4",
+          "minimum_python_minor=6",
+          "require_tcp_client=true"
+        ]
+      }
+    ],
     "service-check": [
       {
         "args": [
