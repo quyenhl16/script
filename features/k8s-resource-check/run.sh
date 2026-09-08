@@ -3,18 +3,40 @@ set -Eeuo pipefail
 
 action="${1:-}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-input_file="${SYSSETUP_PARAM_INPUT_FILE:-}"
+input_file="${SYSSETUP_PARAM_INPUT_FILE:-${SYSSETUP_ARTIFACT_INPUT_FILE:-}}"
+checker_file="${SYSSETUP_ARTIFACT_CHECKER:-$script_dir/check.py}"
 namespace="${SYSSETUP_PARAM_NAMESPACE:-pramf01}"
 sheet="${SYSSETUP_PARAM_SHEET:-VDU}"
 header_row="${SYSSETUP_PARAM_HEADER_ROW:-1}"
 attribute_column="${SYSSETUP_PARAM_ATTRIBUTE_COLUMN:-B}"
 service_start_column="${SYSSETUP_PARAM_SERVICE_START_COLUMN:-D}"
-mapping_file="${SYSSETUP_PARAM_MAPPING_FILE:-}"
+mapping_file="${SYSSETUP_PARAM_MAPPING_FILE:-${SYSSETUP_ARTIFACT_MAPPING_FILE:-}}"
 cpu_default_unit="${SYSSETUP_PARAM_CPU_DEFAULT_UNIT:-m}"
 memory_default_unit="${SYSSETUP_PARAM_MEMORY_DEFAULT_UNIT:-Mi}"
 extra_policy="${SYSSETUP_PARAM_EXTRA_POLICY:-warn}"
 ignore_extra="${SYSSETUP_PARAM_IGNORE_EXTRA:-}"
 show_pass="${SYSSETUP_PARAM_SHOW_PASS:-false}"
+
+parse_workflow_arguments() {
+  local argument
+  for argument in "$@"; do
+    case "$argument" in
+      input_file=*) input_file="${argument#*=}" ;;
+      namespace=*) namespace="${argument#*=}" ;;
+      sheet=*) sheet="${argument#*=}" ;;
+      header_row=*) header_row="${argument#*=}" ;;
+      attribute_column=*) attribute_column="${argument#*=}" ;;
+      service_start_column=*) service_start_column="${argument#*=}" ;;
+      mapping_file=*) mapping_file="${argument#*=}" ;;
+      cpu_default_unit=*) cpu_default_unit="${argument#*=}" ;;
+      memory_default_unit=*) memory_default_unit="${argument#*=}" ;;
+      extra_policy=*) extra_policy="${argument#*=}" ;;
+      ignore_extra=*) ignore_extra="${argument#*=}" ;;
+      show_pass=*) show_pass="${argument#*=}" ;;
+      *) fail "unknown argument: $argument" ;;
+    esac
+  done
+}
 
 fail() {
   printf 'Error: %s\n' "$*" >&2
@@ -38,7 +60,7 @@ validate_configuration() {
     fail|warn|ignore) ;;
     *) fail 'extra_policy must be fail, warn or ignore' ;;
   esac
-  [[ -f "$script_dir/check.py" && -r "$script_dir/check.py" ]] || fail "checker was not found: $script_dir/check.py"
+  [[ -f "$checker_file" && -r "$checker_file" ]] || fail "checker was not found: $checker_file"
 }
 
 preflight() {
@@ -50,7 +72,7 @@ preflight() {
 
 run_check() {
   local -a command=(
-    python3 "$script_dir/check.py"
+    python3 "$checker_file"
     --input "$input_file"
     --namespace "$namespace"
     --sheet "$sheet"
@@ -68,6 +90,10 @@ run_check() {
   fi
   "${command[@]}"
 }
+
+if (($# > 1)); then
+  parse_workflow_arguments "${@:2}"
+fi
 
 case "$action" in
   check)
@@ -87,7 +113,7 @@ case "$action" in
     :
     ;;
   *)
-    printf 'Usage: %s {check|apply|verify|rollback}\n' "$0" >&2
+    printf 'Usage: %s {check|apply|verify|rollback} [key=value ...]\n' "$0" >&2
     exit 2
     ;;
 esac

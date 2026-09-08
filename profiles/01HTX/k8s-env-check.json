@@ -1,7 +1,7 @@
 {
   "apiVersion": "syssetup/v1",
-  "name": "pramf01-env-check",
-  "description": "Compare pramf01 Kubernetes workload environments with an Excel baseline",
+  "name": "k8s-env-check",
+  "description": "Compare Kubernetes workload environments with an Excel baseline",
   "features": [
     {
       "id": "k8s-env-check",

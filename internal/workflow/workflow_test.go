@@ -1,12 +1,16 @@
 package workflow
 
 import (
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/quyenhl16/script/internal/registry"
+	"github.com/quyenhl16/script/internal/remote"
 )
 
 func TestLoadAndDeriveGatewayArguments(t *testing.T) {
@@ -135,13 +139,224 @@ func TestBundledPrepareSetupDeployWorkflow(t *testing.T) {
 	}
 }
 
+func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
+	features, err := registry.Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows, err := Load(filepath.Join("..", "..", "workflows"), features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition, found := workflows.Get("post-deployment-validation")
+	if !found {
+		t.Fatal("bundled post-deployment-validation workflow was not found")
+	}
+	if definition.FailurePolicy != "continue" {
+		t.Fatalf("failurePolicy = %q, want continue", definition.FailurePolicy)
+	}
+	if definition.ExecutionMode != "local" {
+		t.Fatalf("executionMode = %q, want local", definition.ExecutionMode)
+	}
+	wantFeatures := []string{
+		"k8s-service-check",
+		"k8s-resource-check",
+		"k8s-env-check",
+		"k8s-connectivity-check",
+	}
+	gotFeatures := make([]string, 0, len(definition.Steps))
+	for _, step := range definition.Steps {
+		gotFeatures = append(gotFeatures, step.Feature)
+	}
+	if !reflect.DeepEqual(gotFeatures, wantFeatures) {
+		t.Fatalf("workflow features = %#v, want %#v", gotFeatures, wantFeatures)
+	}
+
+	config, err := LoadConfig(filepath.Join("..", "..", "workflow-configs", "post-deployment-validation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := workflows.ValidateConfig(definition, config); err != nil {
+		t.Fatal(err)
+	}
+	for _, stepID := range []string{"resource-check", "env-check"} {
+		invocations := config.Steps[stepID]
+		if len(invocations) != 1 || len(invocations[0].Artifacts) != 2 {
+			t.Fatalf("step %q must expose the workbook and checker: %#v", stepID, invocations)
+		}
+	}
+}
+
+func TestLocalArtifactEnvironmentUsesAbsoluteSourcePath(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "baseline.xlsx")
+	if err := os.WriteFile(path, []byte("test workbook"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	environment, err := localArtifactEnvironment(directory, []ArtifactReference{{ID: "input-file", Source: "baseline.xlsx"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"SYSSETUP_ARTIFACT_INPUT_FILE=" + path}
+	if !reflect.DeepEqual(environment, want) {
+		t.Fatalf("artifact environment = %#v, want %#v", environment, want)
+	}
+}
+
+func TestLocalWorkflowNeedsNoServerAndContinuesAfterArtifactFailure(t *testing.T) {
+	featuresRoot := t.TempDir()
+	writeFeature(t, featuresRoot, "first-feature", false, true)
+	writeFeature(t, featuresRoot, "second-feature", false, true)
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows := &Registry{features: features}
+	definition := Definition{
+		ExecutionMode: "local",
+		FailurePolicy: "continue",
+		Steps: []Step{
+			{ID: "first", Feature: "first-feature"},
+			{ID: "second", Feature: "second-feature", Needs: []string{"first"}},
+		},
+	}
+	missingArtifact := []ArtifactReference{{ID: "input-file", Source: "missing.xlsx"}}
+	config := Config{Directory: t.TempDir(), Steps: map[string][]Invocation{
+		"first":  {{Args: []string{"verify"}, Artifacts: missingArtifact}},
+		"second": {{Args: []string{"verify"}, Artifacts: missingArtifact}},
+	}}
+
+	execution, err := workflows.executeLocal(context.Background(), definition, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(execution.Servers) != 1 || execution.Servers[0].Address != "local" || execution.Servers[0].Success {
+		t.Fatalf("unexpected local execution target: %#v", execution.Servers)
+	}
+	if len(execution.Results) != 2 {
+		t.Fatalf("result count = %d, want 2", len(execution.Results))
+	}
+	for index, result := range execution.Results {
+		if result.Status != StatusFailed || result.Err == nil {
+			t.Fatalf("result %d = %#v, want failed artifact result", index, result)
+		}
+	}
+}
+
+func TestExecuteServerContinuesAfterFailure(t *testing.T) {
+	steps := []preparedStep{
+		{
+			definition:  Step{ID: "first", Feature: "first-feature"},
+			script:      []byte("#!/usr/bin/env bash\nexit 0\n"),
+			invocations: []preparedInvocation{{}},
+			timeout:     time.Second,
+		},
+		{
+			definition:  Step{ID: "second", Feature: "second-feature"},
+			script:      []byte("#!/usr/bin/env bash\nexit 0\n"),
+			invocations: []preparedInvocation{{}},
+			timeout:     time.Second,
+		},
+	}
+
+	result := executeServer(context.Background(), remote.Server{}, steps, nil, "continue")
+	if result.success {
+		t.Fatal("server execution with failed invocations must not be successful")
+	}
+	if len(result.results) != 2 {
+		t.Fatalf("result count = %d, want 2", len(result.results))
+	}
+	for index, item := range result.results {
+		if item.Status != StatusFailed {
+			t.Fatalf("result %d status = %q, want failed", index, item.Status)
+		}
+	}
+}
+
+func TestExecuteServerStillStopsWithDefaultPolicy(t *testing.T) {
+	steps := []preparedStep{
+		{
+			definition:  Step{ID: "first", Feature: "first-feature"},
+			script:      []byte("#!/usr/bin/env bash\nexit 0\n"),
+			invocations: []preparedInvocation{{}},
+			timeout:     time.Second,
+		},
+		{
+			definition:  Step{ID: "second", Feature: "second-feature"},
+			script:      []byte("#!/usr/bin/env bash\nexit 0\n"),
+			invocations: []preparedInvocation{{}},
+			timeout:     time.Second,
+		},
+	}
+
+	result := executeServer(context.Background(), remote.Server{}, steps, nil, "")
+	if len(result.results) != 2 {
+		t.Fatalf("result count = %d, want 2", len(result.results))
+	}
+	if result.results[0].Status != StatusFailed || result.results[1].Status != StatusSkipped {
+		t.Fatalf("statuses = [%q, %q], want [failed, skipped]", result.results[0].Status, result.results[1].Status)
+	}
+}
+
+func TestLoadAllowsOnlyOptedInLocalFeature(t *testing.T) {
+	featuresRoot := t.TempDir()
+	writeFeature(t, featuresRoot, "compatible", false, true)
+	writeFeature(t, featuresRoot, "local-only", false, false)
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	compatibleRoot := t.TempDir()
+	writeWorkflow(t, compatibleRoot, `{
+  "apiVersion":"syssetup/workflow/v1", "id":"compatible-workflow", "name":"Compatible", "version":"1",
+  "steps":[{"id":"check", "feature":"compatible"}]
+}`)
+	if _, err := Load(compatibleRoot, features); err != nil {
+		t.Fatalf("workflow-compatible local feature was rejected: %v", err)
+	}
+
+	localRoot := t.TempDir()
+	writeWorkflow(t, localRoot, `{
+  "apiVersion":"syssetup/workflow/v1", "id":"local-workflow", "name":"Local", "version":"1",
+  "steps":[{"id":"check", "feature":"local-only"}]
+}`)
+	if _, err := Load(localRoot, features); err == nil {
+		t.Fatal("expected local feature without workflow opt-in to be rejected")
+	}
+}
+
+func TestLoadRejectsRemoteOnlyFeatureInLocalWorkflow(t *testing.T) {
+	featuresRoot := t.TempDir()
+	writeFeature(t, featuresRoot, "remote-only", true, false)
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowsRoot := t.TempDir()
+	writeWorkflow(t, workflowsRoot, `{
+  "apiVersion":"syssetup/workflow/v1", "id":"local-workflow", "name":"Local", "version":"1",
+  "executionMode":"local", "steps":[{"id":"check", "feature":"remote-only"}]
+}`)
+	if _, err := Load(workflowsRoot, features); err == nil {
+		t.Fatal("expected remote-only feature in local workflow to be rejected")
+	}
+}
+
 func writeRemoteFeature(t *testing.T, root, id string) {
+	writeFeature(t, root, id, true, false)
+}
+
+func writeFeature(t *testing.T, root, id string, remoteOnly, workflowCompatible bool) {
 	t.Helper()
 	directory := filepath.Join(root, id)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	manifest := `{"apiVersion":"syssetup/v1","id":"` + id + `","name":"` + id + `","version":"1","entrypoint":"run.sh","remoteOnly":true,"timeoutSeconds":30}`
+	manifest := fmt.Sprintf(
+		`{"apiVersion":"syssetup/v1","id":%q,"name":%q,"version":"1","entrypoint":"run.sh","remoteOnly":%t,"workflowCompatible":%t,"timeoutSeconds":30}`,
+		id, id, remoteOnly, workflowCompatible,
+	)
 	if err := os.WriteFile(filepath.Join(directory, "feature.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
 	}

@@ -1,7 +1,7 @@
 {
   "apiVersion": "syssetup/v1",
-  "name": "pramf01-services",
-  "description": "Required services, endpoints, External IPs and TCP connectivity checks for pramf01",
+  "name": "k8s-service-check",
+  "description": "Required Kubernetes services, endpoints, External IPs and TCP connectivity checks",
   "features": [
     {
       "id": "k8s-service-check",

@@ -1,7 +1,7 @@
 {
   "apiVersion": "syssetup/v1",
-  "name": "pramf01-resource-check",
-  "description": "Compare pramf01 Kubernetes workload resources with an Excel baseline",
+  "name": "k8s-resource-check",
+  "description": "Compare Kubernetes workload resources with an Excel baseline",
   "features": [
     {
       "id": "k8s-resource-check",

@@ -35,8 +35,8 @@ sudo ./bin/syssetup tui --profile profiles/01HTX/base-server.json
 Kiểm tra VIP, OSPF và kết nối mạng của workload Kubernetes `pramf01`:
 
 ```bash
-./bin/syssetup plan --profile profiles/01HTX/pramf01-connectivity.json
-./bin/syssetup run --profile profiles/01HTX/pramf01-connectivity.json
+./bin/syssetup plan --profile profiles/01HTX/k8s-connectivity-check.json
+./bin/syssetup run --profile profiles/01HTX/k8s-connectivity-check.json
 ```
 
 Đổi `phase` trong profile thành `vip`, `ospf`, `ping`, `curl` hoặc `all` để chọn
@@ -84,8 +84,8 @@ External IP kỳ vọng và kết nối đến mọi cổng TCP qua ClusterIP (h
 đối với headless service):
 
 ```bash
-./bin/syssetup plan --profile profiles/01HTX/pramf01-services.json
-./bin/syssetup run --profile profiles/01HTX/pramf01-services.json
+./bin/syssetup plan --profile profiles/01HTX/k8s-service-check.json
+./bin/syssetup run --profile profiles/01HTX/k8s-service-check.json
 ```
 
 Feature `k8s-service-check` dùng `curl` với giao thức telnet để chỉ kiểm tra bắt
@@ -114,8 +114,8 @@ Kiểm tra environment của Deployment, StatefulSet và DaemonSet theo ma trậ
 
 ```bash
 cp /path/to/pramf01-input_100K.xlsx .
-./bin/syssetup plan --profile profiles/01HTX/pramf01-env-check.json
-./bin/syssetup run --profile profiles/01HTX/pramf01-env-check.json
+./bin/syssetup plan --profile profiles/01HTX/k8s-env-check.json
+./bin/syssetup run --profile profiles/01HTX/k8s-env-check.json
 ```
 
 Feature `k8s-env-check` đọc sheet `VDU`: cột B chứa thuộc tính bắt đầu bằng
@@ -145,8 +145,8 @@ chối để tránh so sánh dữ liệu cũ hoặc rỗng.
 Kiểm tra CPU và memory request/limit của workload theo cùng file Excel:
 
 ```bash
-./bin/syssetup plan --profile profiles/01HTX/pramf01-resource-check.json
-./bin/syssetup run --profile profiles/01HTX/pramf01-resource-check.json
+./bin/syssetup plan --profile profiles/01HTX/k8s-resource-check.json
+./bin/syssetup run --profile profiles/01HTX/k8s-resource-check.json
 ```
 
 Feature `k8s-resource-check` đọc các thuộc tính `mem_size`, `num_cpus`,
@@ -169,6 +169,30 @@ Hoặc:
 chmod +x setup.sh
 sudo ./setup.sh tui
 ```
+
+### Workflow kiểm tra sau triển khai
+
+Workflow `post-deployment-validation` chạy tuần tự trên máy local sau khi hệ
+thống Kubernetes đã lên:
+
+```text
+1. k8s-service-check
+2. k8s-resource-check   sau service-check
+3. k8s-env-check        sau resource-check
+4. k8s-connectivity-check sau env-check
+```
+
+Trước khi chạy, đặt file Excel baseline đúng đường dẫn:
+
+```bash
+cp /path/to/pramf01-input_100K.xlsx workflow-configs/artifacts/pramf01-input_100K.xlsx
+```
+
+Mở tab `5 Workflows`, chọn `post-deployment-validation` rồi nhấn `F5`; workflow
+chạy local và không yêu cầu server, user hoặc password SSH. Máy đang chạy
+`syssetup` cần truy cập được namespace `pramf01` bằng `kubectl`, đồng thời có
+`python3`, `curl` hoặc `telnet` theo loại kiểm tra. Nếu một bước lỗi, workflow vẫn
+ghi nhận lỗi và tiếp tục chạy các bước còn lại.
 
 ## TUI dashboard
 
@@ -229,7 +253,7 @@ profiles/
 └── 01HTX/
     ├── base-server.json
     ├── compare-xml-config.json
-    ├── pramf01-connectivity.json
+    ├── k8s-connectivity-check.json
     ├── update-alarm-mappings.json
     └── verify-xml-config.json
 ```

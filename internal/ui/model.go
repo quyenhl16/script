@@ -202,6 +202,7 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 			{Title: "#", Width: 4},
 			{Title: "WORKFLOW", Width: 38},
 			{Title: "VERSION", Width: 9},
+			{Title: "MODE", Width: 8},
 			{Title: "STEPS", Width: 7},
 		}),
 	)
@@ -348,6 +349,10 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.sshOutput.GotoBottom()
 		if msg.err != nil {
 			m.notice = "Workflow failed: " + msg.err.Error()
+		} else if m.activeWorkflow.ExecutionMode == "local" && succeeded == 0 {
+			m.notice = "Local workflow completed with failures"
+		} else if m.activeWorkflow.ExecutionMode == "local" {
+			m.notice = "Local workflow completed successfully"
 		} else {
 			m.notice = fmt.Sprintf("Workflow completed: %d/%d server(s) succeeded", succeeded, len(msg.execution.Servers))
 		}
@@ -593,7 +598,11 @@ func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "f3":
 		if !m.remoteRunning {
-			m.loadBaseServers()
+			if m.sshMode == sshWorkflow && m.activeWorkflow.ExecutionMode == "local" {
+				m.notice = "Local workflow does not require SSH servers"
+			} else {
+				m.loadBaseServers()
+			}
 		}
 		return m, nil
 	case "f4":
@@ -625,6 +634,9 @@ func (m *model) sshFieldOrder() []int {
 	case sshScript:
 		return []int{sshHosts, sshUser, sshPassword, sshScriptPath, sshScriptArgs}
 	case sshWorkflow:
+		if m.activeWorkflow.ExecutionMode == "local" {
+			return []int{sshWorkflowConfig}
+		}
 		return []int{sshHosts, sshUser, sshPassword, sshWorkflowConfig}
 	default:
 		return []int{sshHosts, sshUser, sshPassword, sshCommandValue}
@@ -670,6 +682,9 @@ func (m *model) startRemoteRun() tea.Cmd {
 		m.notice = "Wait for the feature plan to finish before starting SSH"
 		return nil
 	}
+	if m.sshMode == sshWorkflow {
+		return m.startWorkflowRun()
+	}
 	servers, err := m.sshServers()
 	if err != nil {
 		m.remoteErr = err
@@ -685,42 +700,6 @@ func (m *model) startRemoteRun() tea.Cmd {
 		m.remoteErr = err
 		m.notice = "SSH host keys: " + err.Error()
 		return nil
-	}
-
-	if m.sshMode == sshWorkflow {
-		if m.workflowRegistry == nil {
-			m.remoteErr = errors.New("workflow registry is not available")
-			m.notice = "Workflow registry is not available"
-			return nil
-		}
-		config, loadErr := workflow.LoadConfig(m.sshInputs[sshWorkflowConfig].Value())
-		if loadErr != nil {
-			m.remoteErr = loadErr
-			m.notice = "Workflow: " + loadErr.Error()
-			return nil
-		}
-		definition, found := m.workflowRegistry.Get(config.Workflow)
-		if !found {
-			m.remoteErr = fmt.Errorf("unknown workflow %q", config.Workflow)
-			m.notice = "Workflow: " + m.remoteErr.Error()
-			return nil
-		}
-		if err := m.workflowRegistry.ValidateConfig(definition, config); err != nil {
-			m.remoteErr = err
-			m.notice = "Workflow: " + err.Error()
-			return nil
-		}
-		m.remoteErr = nil
-		m.remoteRunning = true
-		m.remoteStartedAt = time.Now()
-		m.remoteOperation = definition.ID
-		m.remoteKind = "workflow"
-		m.activeWorkflow = definition
-		m.notice = fmt.Sprintf("Running workflow %s on %d server(s)...", definition.ID, len(servers))
-		m.sshOutput.SetContent("Starting workflow...")
-		runContext, cancel := context.WithCancel(m.ctx)
-		m.cancelRemote = cancel
-		return tea.Batch(m.spinner.Tick, runWorkflowCmd(runContext, m.workflowRegistry, definition, config, servers, hostKeys))
 	}
 
 	request := remote.Request{Servers: servers, Timeout: remote.DefaultTimeout, HostKeys: hostKeys}
@@ -755,6 +734,67 @@ func (m *model) startRemoteRun() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, runRemoteCmd(runContext, request))
 }
 
+func (m *model) startWorkflowRun() tea.Cmd {
+	if m.workflowRegistry == nil {
+		m.remoteErr = errors.New("workflow registry is not available")
+		m.notice = "Workflow registry is not available"
+		return nil
+	}
+	config, err := workflow.LoadConfig(m.sshInputs[sshWorkflowConfig].Value())
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "Workflow: " + err.Error()
+		return nil
+	}
+	definition, found := m.workflowRegistry.Get(config.Workflow)
+	if !found {
+		m.remoteErr = fmt.Errorf("unknown workflow %q", config.Workflow)
+		m.notice = "Workflow: " + m.remoteErr.Error()
+		return nil
+	}
+	if err := m.workflowRegistry.ValidateConfig(definition, config); err != nil {
+		m.remoteErr = err
+		m.notice = "Workflow: " + err.Error()
+		return nil
+	}
+
+	var servers []remote.Server
+	var hostKeys ssh.HostKeyCallback
+	if definition.ExecutionMode != "local" {
+		servers, err = m.sshServers()
+		if err != nil {
+			m.remoteErr = err
+			m.notice = "SSH: " + err.Error()
+			return nil
+		}
+		knownHostsPath, hostKeyErr := remote.DefaultKnownHostsPath()
+		if hostKeyErr == nil {
+			hostKeys, hostKeyErr = remote.NewTOFUHostKeyCallback(knownHostsPath)
+		}
+		if hostKeyErr != nil {
+			m.remoteErr = hostKeyErr
+			m.notice = "SSH host keys: " + hostKeyErr.Error()
+			return nil
+		}
+	}
+
+	m.remoteErr = nil
+	m.remoteRunning = true
+	m.remoteStartedAt = time.Now()
+	m.remoteOperation = definition.ID
+	m.remoteKind = "workflow"
+	m.activeWorkflow = definition
+	if definition.ExecutionMode == "local" {
+		m.notice = fmt.Sprintf("Running workflow %s locally...", definition.ID)
+	} else {
+		m.notice = fmt.Sprintf("Running workflow %s on %d server(s)...", definition.ID, len(servers))
+	}
+	m.sshOutput.SetContent("Starting workflow...")
+	runContext, cancel := context.WithCancel(m.ctx)
+	m.cancelRemote = cancel
+	return tea.Batch(m.spinner.Tick, runWorkflowCmd(runContext, m.workflowRegistry, definition, config, servers, hostKeys))
+}
+
 func runRemoteCmd(ctx context.Context, request remote.Request) tea.Cmd {
 	return func() tea.Msg {
 		return remoteFinishedMsg{results: remote.Execute(ctx, request)}
@@ -775,11 +815,13 @@ func (m *model) loadCurrentWorkflow() tea.Cmd {
 		return nil
 	}
 	id := row[1]
-	if _, found := m.workflowRegistry.Get(id); !found {
+	definition, found := m.workflowRegistry.Get(id)
+	if !found {
 		m.notice = "Unknown workflow: " + id
 		return nil
 	}
 	m.sshMode = sshWorkflow
+	m.activeWorkflow = definition
 	m.sshInputs[sshWorkflowConfig].SetValue(filepath.Join("workflow-configs", id+".json"))
 	m.activeTab = tabSSH
 	m.notice = fmt.Sprintf("Workflow %s loaded; review config and press F5", id)
@@ -1058,6 +1100,7 @@ func (m *model) refreshWorkflowRows() {
 			fmt.Sprintf("%d", index+1),
 			definition.ID,
 			definition.Version,
+			workflowExecutionMode(definition),
 			fmt.Sprintf("%d", len(definition.Steps)),
 		})
 	}
@@ -1139,8 +1182,9 @@ func (m *model) resize(width, height int) {
 	m.workflowTable.SetHeight(max(contentHeight-2, 3))
 	m.workflowTable.SetColumns([]table.Column{
 		{Title: "#", Width: 4},
-		{Title: "WORKFLOW", Width: max(leftWidth-27, 18)},
+		{Title: "WORKFLOW", Width: max(leftWidth-36, 18)},
 		{Title: "VERSION", Width: 9},
+		{Title: "MODE", Width: 8},
 		{Title: "STEPS", Width: 7},
 	})
 	m.profileTable.SetWidth(max(leftWidth-2, 20))

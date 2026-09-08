@@ -73,6 +73,7 @@ func (m *model) tabsView() string {
 
 func (m *model) sshView(height int) string {
 	mode := "COMMAND"
+	titleText := "Remote SSH"
 	modeHint := "Run one Linux command on every server"
 	activeInputs := []int{sshCommandValue}
 	switch m.sshMode {
@@ -82,37 +83,55 @@ func (m *model) sshView(height int) string {
 		activeInputs = []int{sshScriptPath, sshScriptArgs}
 	case sshWorkflow:
 		mode = "WORKFLOW"
-		modeHint = "Run a configured step-by-step workflow on every server"
+		if m.activeWorkflow.ExecutionMode == "local" {
+			titleText = "Local"
+			modeHint = "Run a configured step-by-step workflow on this machine"
+		} else {
+			modeHint = "Run a configured step-by-step workflow on every server"
+		}
 		activeInputs = []int{sshWorkflowConfig}
 	}
 	formLines := []string{
-		panelTitleStyle.Render("Remote SSH") + "  " + contextStyle.Render(mode),
+		panelTitleStyle.Render(titleText) + "  " + contextStyle.Render(mode),
 		mutedStyle.Render(modeHint),
 		"",
-		m.sshInputs[sshHosts].View(),
-		m.sshInputs[sshUser].View(),
-		m.sshInputs[sshPassword].View(),
+	}
+	if m.sshMode != sshWorkflow || m.activeWorkflow.ExecutionMode != "local" {
+		formLines = append(formLines,
+			m.sshInputs[sshHosts].View(),
+			m.sshInputs[sshUser].View(),
+			m.sshInputs[sshPassword].View(),
+		)
 	}
 	for _, input := range activeInputs {
 		formLines = append(formLines, m.sshInputs[input].View())
 	}
-	if m.serverSource != "" {
+	if m.serverSource != "" && (m.sshMode != sshWorkflow || m.activeWorkflow.ExecutionMode != "local") {
 		formLines = append(formLines, contextStyle.Render(fmt.Sprintf("Loaded: %d server(s) from %s", len(m.profileServers), m.serverSource)))
 	}
-	formLines = append(formLines,
-		"",
-		mutedStyle.Render("Servers: comma/space separated host[:port]; default port is 22."),
-		mutedStyle.Render("F3 loads all servers and credentials from this system's base-server profile."),
-		mutedStyle.Render("Manually entered server/user/password fields take precedence."),
-		mutedStyle.Render("Password stays in memory and is never written to logs."),
-		mutedStyle.Render("Host keys use trust-on-first-use and changed keys are rejected."),
-	)
+	if m.sshMode == sshWorkflow && m.activeWorkflow.ExecutionMode == "local" {
+		formLines = append(formLines, "", mutedStyle.Render("This workflow runs locally; no SSH server or credentials are required."))
+	} else {
+		formLines = append(formLines,
+			"",
+			mutedStyle.Render("Servers: comma/space separated host[:port]; default port is 22."),
+			mutedStyle.Render("F3 loads all servers and credentials from this system's base-server profile."),
+			mutedStyle.Render("Manually entered server/user/password fields take precedence."),
+			mutedStyle.Render("Password stays in memory and is never written to logs."),
+			mutedStyle.Render("Host keys use trust-on-first-use and changed keys are rejected."),
+		)
+	}
 	if m.width < 100 {
 		visibleFields := 7
 		if m.sshMode == sshScript {
 			visibleFields = 8
 		}
-		formLines = append(formLines[:visibleFields], "", mutedStyle.Render("F2 mode · F3 servers · F4 report · F5 run."))
+		visibleFields = min(visibleFields, len(formLines))
+		shortcut := "F2 mode · F3 servers · F4 report · F5 run."
+		if m.sshMode == sshWorkflow && m.activeWorkflow.ExecutionMode == "local" {
+			shortcut = "F2 mode · F4 report · F5 run."
+		}
+		formLines = append(formLines[:visibleFields], "", mutedStyle.Render(shortcut))
 	}
 	formWidth := m.width - 2
 	if m.width >= 100 {
@@ -123,8 +142,12 @@ func (m *model) sshView(height int) string {
 		formHeight = 10
 	}
 	form := panelStyle.Width(max(formWidth-2, 20)).Height(formHeight).Render(strings.Join(formLines, "\n"))
+	resultsTitle := "Per-server results"
+	if m.sshMode == sshWorkflow && m.activeWorkflow.ExecutionMode == "local" {
+		resultsTitle = "Local workflow results"
+	}
 	if m.width < 100 {
-		title := panelTitleStyle.Render("Per-server results")
+		title := panelTitleStyle.Render(resultsTitle)
 		if m.remoteRunning {
 			title += "  " + m.spinner.View() + noticeStyle.Render("running")
 		}
@@ -132,7 +155,7 @@ func (m *model) sshView(height int) string {
 		return lipgloss.JoinVertical(lipgloss.Left, form, result)
 	}
 	resultWidth := m.width - formWidth - 1
-	title := panelTitleStyle.Render("Per-server results")
+	title := panelTitleStyle.Render(resultsTitle)
 	if m.remoteRunning {
 		title += "  " + m.spinner.View() + noticeStyle.Render("running")
 	}
@@ -209,6 +232,7 @@ func (m *model) workflowDetailView() string {
 		"",
 		keyStyle.Render("ID") + "       " + valueStyle.Render(definition.ID),
 		keyStyle.Render("Version") + "  " + valueStyle.Render(definition.Version),
+		keyStyle.Render("Mode") + "     " + valueStyle.Render(workflowExecutionMode(definition)),
 		"",
 		keyStyle.Render("Steps"),
 	}
@@ -221,6 +245,13 @@ func (m *model) workflowDetailView() string {
 	}
 	lines = append(lines, "", mutedStyle.Render("Press Enter to load this workflow."))
 	return strings.Join(lines, "\n")
+}
+
+func workflowExecutionMode(definition workflow.Definition) string {
+	if definition.ExecutionMode == "local" {
+		return "local"
+	}
+	return "remote"
 }
 
 func (m *model) featuresView(height int) string {

@@ -9,6 +9,28 @@ tcp_probe="${SYSSETUP_PARAM_TCP_PROBE:-true}"
 probe_targets="${SYSSETUP_PARAM_PROBE_TARGETS:-all}"
 connect_timeout="${SYSSETUP_PARAM_CONNECT_TIMEOUT:-3}"
 
+parse_workflow_arguments() {
+  local argument
+  for argument in "$@"; do
+    case "$argument" in
+      namespace=*) namespace="${argument#*=}" ;;
+      services=*) expected_services="${argument#*=}" ;;
+      external_ip_expectations=*) external_ip_expectations="${argument#*=}" ;;
+      tcp_probe=*) tcp_probe="${argument#*=}" ;;
+      probe_targets=*) probe_targets="${argument#*=}" ;;
+      connect_timeout=*) connect_timeout="${argument#*=}" ;;
+      *)
+        printf 'Unknown argument: %q\n' "$argument" >&2
+        return 2
+        ;;
+    esac
+  done
+}
+
+if (($# > 1)); then
+  parse_workflow_arguments "${@:2}" || exit $?
+fi
+
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   green=$'\033[0;32m'
   red=$'\033[0;31m'
@@ -502,7 +524,7 @@ case "$action" in
     :
     ;;
   *)
-    printf 'Usage: %s {check|apply|verify|rollback}\n' "$0" >&2
+    printf 'Usage: %s {check|apply|verify|rollback} [key=value ...]\n' "$0" >&2
     exit 2
     ;;
 esac

@@ -84,6 +84,12 @@ func RemoteRun(profile domain.Profile, operation, kind string, results []remote.
 }
 
 func WorkflowRun(profile domain.Profile, definition workflow.Definition, execution workflow.Execution, runErr error, started, finished time.Time) Document {
+	targetLabel := "Servers"
+	kind := "workflow"
+	if definition.ExecutionMode == "local" {
+		targetLabel = "Executions"
+		kind = "local workflow"
+	}
 	passedServers := 0
 	for _, server := range execution.Servers {
 		if server.Success {
@@ -114,10 +120,10 @@ func WorkflowRun(profile domain.Profile, definition workflow.Definition, executi
 	}
 	return Document{
 		Title: "SYSSETUP WORKFLOW REPORT", Operation: definition.ID,
-		System: profile.System, Profile: profile.Name, Kind: "workflow", Status: status,
+		System: profile.System, Profile: profile.Name, Kind: kind, Status: status,
 		StartedAt: started, FinishedAt: finished,
 		Summary: []SummaryItem{
-			{Label: "Servers", Value: fmt.Sprint(len(execution.Servers))},
+			{Label: targetLabel, Value: fmt.Sprint(len(execution.Servers))},
 			{Label: "Passed", Value: fmt.Sprint(passedServers)},
 			{Label: "Failed", Value: fmt.Sprint(len(execution.Servers) - passedServers)},
 			{Label: "Steps", Value: fmt.Sprint(len(execution.Results))},

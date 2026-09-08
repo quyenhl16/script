@@ -1,11 +1,13 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -29,6 +31,7 @@ type Definition struct {
 	Name          string `json:"name"`
 	Version       string `json:"version"`
 	Description   string `json:"description,omitempty"`
+	ExecutionMode string `json:"executionMode,omitempty"`
 	FailurePolicy string `json:"failurePolicy,omitempty"`
 	Steps         []Step `json:"steps"`
 	Directory     string `json:"-"`
@@ -162,10 +165,14 @@ func validateDefinition(definition Definition, features *registry.Registry) erro
 	if definition.ID == "" || definition.Name == "" || definition.Version == "" {
 		return errors.New("id, name and version are required")
 	}
-	if definition.FailurePolicy == "" {
-		definition.FailurePolicy = "stop-server"
+	switch definition.ExecutionMode {
+	case "", "remote", "local":
+	default:
+		return fmt.Errorf("unsupported executionMode %q", definition.ExecutionMode)
 	}
-	if definition.FailurePolicy != "stop-server" {
+	switch definition.FailurePolicy {
+	case "", "stop-server", "continue":
+	default:
 		return fmt.Errorf("unsupported failurePolicy %q", definition.FailurePolicy)
 	}
 	if len(definition.Steps) == 0 {
@@ -188,8 +195,11 @@ func validateDefinition(definition Definition, features *registry.Registry) erro
 		if !found {
 			return fmt.Errorf("step %q references unknown feature %q", step.ID, step.Feature)
 		}
-		if !feature.RemoteOnly {
-			return fmt.Errorf("step %q feature %q must be remote-only", step.ID, step.Feature)
+		if definition.ExecutionMode == "local" && (feature.RemoteOnly || !feature.WorkflowCompatible) {
+			return fmt.Errorf("step %q feature %q is not compatible with local workflows", step.ID, step.Feature)
+		}
+		if definition.ExecutionMode != "local" && !feature.RemoteOnly && !feature.WorkflowCompatible {
+			return fmt.Errorf("step %q feature %q must be remote-only or workflow-compatible", step.ID, step.Feature)
 		}
 		if step.DeriveArgs != nil {
 			if !seen[step.DeriveArgs.Step] {
@@ -350,6 +360,9 @@ func (r *Registry) Execute(ctx context.Context, definition Definition, config Co
 	if err := r.ValidateConfig(definition, config); err != nil {
 		return Execution{}, err
 	}
+	if definition.ExecutionMode == "local" {
+		return r.executeLocal(ctx, definition, config)
+	}
 	prepared := make([]preparedStep, 0, len(definition.Steps))
 	for _, step := range definition.Steps {
 		feature, _ := r.features.Get(step.Feature)
@@ -389,7 +402,7 @@ func (r *Registry) Execute(ctx context.Context, definition Definition, config Co
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			serverExecutions[index] = executeServer(ctx, server, prepared, hostKeys)
+			serverExecutions[index] = executeServer(ctx, server, prepared, hostKeys, definition.FailurePolicy)
 		}()
 	}
 	group.Wait()
@@ -402,11 +415,11 @@ func (r *Registry) Execute(ctx context.Context, definition Definition, config Co
 	return execution, nil
 }
 
-func executeServer(ctx context.Context, server remote.Server, steps []preparedStep, hostKeys ssh.HostKeyCallback) serverExecution {
+func executeServer(ctx context.Context, server remote.Server, steps []preparedStep, hostKeys ssh.HostKeyCallback, failurePolicy string) serverExecution {
 	result := serverExecution{success: true}
-	failed := false
+	halted := false
 	for _, step := range steps {
-		if failed {
+		if halted {
 			result.results = append(result.results, Result{
 				Server: server.Address, StepID: step.definition.ID,
 				FeatureID: step.definition.Feature, Status: StatusSkipped,
@@ -422,8 +435,8 @@ func executeServer(ctx context.Context, server remote.Server, steps []preparedSt
 			status := StatusDone
 			if remoteResult.Err != nil {
 				status = StatusFailed
-				failed = true
 				result.success = false
+				halted = failurePolicy != "continue" || ctx.Err() != nil
 			}
 			result.results = append(result.results, Result{
 				Server: remoteResult.Address, StepID: step.definition.ID,
@@ -431,12 +444,111 @@ func executeServer(ctx context.Context, server remote.Server, steps []preparedSt
 				Status: status, Output: remoteResult.Output, Duration: remoteResult.Duration,
 				Err: remoteResult.Err,
 			})
-			if failed {
+			if halted {
 				break
 			}
 		}
 	}
 	return result
+}
+
+func (r *Registry) executeLocal(ctx context.Context, definition Definition, config Config) (Execution, error) {
+	execution := Execution{Servers: []ServerResult{{Address: "local", Success: true}}}
+	halted := false
+	for _, step := range definition.Steps {
+		feature, _ := r.features.Get(step.Feature)
+		if halted {
+			execution.Results = append(execution.Results, Result{
+				Server: "local", StepID: step.ID, FeatureID: step.Feature, Status: StatusSkipped,
+			})
+			continue
+		}
+		invocations, err := deriveInvocations(step, config)
+		if err != nil {
+			return Execution{}, err
+		}
+		for invocationIndex, invocation := range invocations {
+			started := time.Now()
+			environment, err := localArtifactEnvironment(config.Directory, invocation.Artifacts)
+			if err != nil {
+				execution.Servers[0].Success = false
+				halted = definition.FailurePolicy != "continue" || ctx.Err() != nil
+				execution.Results = append(execution.Results, Result{
+					Server: "local", StepID: step.ID, FeatureID: step.Feature,
+					Invocation: invocationIndex + 1, Status: StatusFailed,
+					Duration: time.Since(started), Err: fmt.Errorf("load artifacts: %w", err),
+				})
+				if halted {
+					break
+				}
+				continue
+			}
+			runContext, cancel := context.WithTimeout(ctx, time.Duration(feature.TimeoutSeconds)*time.Second)
+			arguments := append([]string{"bash", filepath.Join(feature.Directory, feature.Entrypoint)}, invocation.Args...)
+			command := exec.CommandContext(runContext, "/usr/bin/env", arguments...)
+			command.Env = mergeEnvironment(os.Environ(), environment)
+			var output bytes.Buffer
+			command.Stdout = &output
+			command.Stderr = &output
+			runErr := command.Run()
+			if runContext.Err() == context.DeadlineExceeded {
+				runErr = fmt.Errorf("timed out after %s", time.Duration(feature.TimeoutSeconds)*time.Second)
+			}
+			cancel()
+
+			status := StatusDone
+			if runErr != nil {
+				status = StatusFailed
+				execution.Servers[0].Success = false
+				halted = definition.FailurePolicy != "continue" || ctx.Err() != nil
+			}
+			execution.Results = append(execution.Results, Result{
+				Server: "local", StepID: step.ID, FeatureID: step.Feature,
+				Invocation: invocationIndex + 1, Status: status, Output: output.String(),
+				Duration: time.Since(started), Err: runErr,
+			})
+			if halted {
+				break
+			}
+		}
+	}
+	return execution, nil
+}
+
+func localArtifactEnvironment(configDirectory string, references []ArtifactReference) ([]string, error) {
+	environment := make([]string, 0, len(references))
+	for _, reference := range references {
+		source := reference.Source
+		if !filepath.IsAbs(source) {
+			source = filepath.Join(configDirectory, source)
+		}
+		if _, err := remote.LoadArtifact(reference.ID, source); err != nil {
+			return nil, err
+		}
+		absoluteSource, err := filepath.Abs(source)
+		if err != nil {
+			return nil, fmt.Errorf("resolve artifact %q: %w", reference.ID, err)
+		}
+		name := "SYSSETUP_ARTIFACT_" + strings.ToUpper(strings.ReplaceAll(reference.ID, "-", "_"))
+		environment = append(environment, name+"="+absoluteSource)
+	}
+	return environment, nil
+}
+
+func mergeEnvironment(base, overrides []string) []string {
+	overridden := make(map[string]bool, len(overrides))
+	for _, value := range overrides {
+		name, _, _ := strings.Cut(value, "=")
+		overridden[name] = true
+	}
+	merged := make([]string, 0, len(base)+len(overrides))
+	for _, value := range base {
+		name, _, _ := strings.Cut(value, "=")
+		if !overridden[name] {
+			merged = append(merged, value)
+		}
+	}
+	return append(merged, overrides...)
 }
 
 func contains(values []string, target string) bool {

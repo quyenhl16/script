@@ -8,20 +8,21 @@ type Parameter struct {
 }
 
 type Feature struct {
-	APIVersion        string               `json:"apiVersion"`
-	ID                string               `json:"id"`
-	Name              string               `json:"name"`
-	Version           string               `json:"version"`
-	Description       string               `json:"description,omitempty"`
-	Entrypoint        string               `json:"entrypoint"`
-	SupportedOS       []string             `json:"supportedOS,omitempty"`
-	RequireRoot       bool                 `json:"requireRoot,omitempty"`
-	RemoteOnly        bool                 `json:"remoteOnly,omitempty"`
-	RemoteArgsExample string               `json:"remoteArgsExample,omitempty"`
-	TimeoutSeconds    int                  `json:"timeoutSeconds,omitempty"`
-	DependsOn         []string             `json:"dependsOn,omitempty"`
-	Parameters        map[string]Parameter `json:"parameters,omitempty"`
-	Directory         string               `json:"-"`
+	APIVersion         string               `json:"apiVersion"`
+	ID                 string               `json:"id"`
+	Name               string               `json:"name"`
+	Version            string               `json:"version"`
+	Description        string               `json:"description,omitempty"`
+	Entrypoint         string               `json:"entrypoint"`
+	SupportedOS        []string             `json:"supportedOS,omitempty"`
+	RequireRoot        bool                 `json:"requireRoot,omitempty"`
+	RemoteOnly         bool                 `json:"remoteOnly,omitempty"`
+	WorkflowCompatible bool                 `json:"workflowCompatible,omitempty"`
+	RemoteArgsExample  string               `json:"remoteArgsExample,omitempty"`
+	TimeoutSeconds     int                  `json:"timeoutSeconds,omitempty"`
+	DependsOn          []string             `json:"dependsOn,omitempty"`
+	Parameters         map[string]Parameter `json:"parameters,omitempty"`
+	Directory          string               `json:"-"`
 }
 
 type FeatureSelection struct {

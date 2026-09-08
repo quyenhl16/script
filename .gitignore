@@ -7,3 +7,5 @@
 __pycache__/
 *.py[cod]
 /profiles/01HTX/base-server-tmp.json
+/workflow-configs/artifacts/*.xlsx
+!/workflow-configs/artifacts/README.md

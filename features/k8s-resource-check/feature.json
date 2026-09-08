@@ -2,11 +2,12 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-resource-check",
   "name": "Kubernetes resource check",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Compare Kubernetes container resource requests and limits with an Excel baseline",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
+  "workflowCompatible": true,
   "timeoutSeconds": 900,
   "dependsOn": ["check-os"],
   "parameters": {

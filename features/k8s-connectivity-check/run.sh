@@ -25,6 +25,41 @@ curl_connect_timeout="${SYSSETUP_PARAM_CURL_CONNECT_TIMEOUT_SECONDS:-3}"
 curl_max_time="${SYSSETUP_PARAM_CURL_MAX_TIME_SECONDS:-10}"
 curl_insecure="${SYSSETUP_PARAM_CURL_INSECURE:-false}"
 
+parse_workflow_arguments() {
+  local argument
+  for argument in "$@"; do
+    case "$argument" in
+      phase=*) phase="${argument#*=}" ;;
+      namespace=*) namespace="${argument#*=}" ;;
+      vip_comm=*) vip_comm="${argument#*=}" ;;
+      vip_ipgw=*) vip_ipgw="${argument#*=}" ;;
+      vip_gtp=*) vip_gtp="${argument#*=}" ;;
+      ip_ausf=*) ip_ausf="${argument#*=}" ;;
+      ip_udm=*) ip_udm="${argument#*=}" ;;
+      ip_smf=*) ip_smf="${argument#*=}" ;;
+      ip_amf_remote=*) ip_amf_remote="${argument#*=}" ;;
+      ip_nrf=*) ip_nrf="${argument#*=}" ;;
+      ip_gnodeb=*) ip_gnodeb="${argument#*=}" ;;
+      curl_ausf_urls=*) curl_ausf_urls="${argument#*=}" ;;
+      curl_udm_urls=*) curl_udm_urls="${argument#*=}" ;;
+      curl_smf_urls=*) curl_smf_urls="${argument#*=}" ;;
+      curl_amf_remote_urls=*) curl_amf_remote_urls="${argument#*=}" ;;
+      curl_nrf_urls=*) curl_nrf_urls="${argument#*=}" ;;
+      curl_connect_timeout_seconds=*) curl_connect_timeout="${argument#*=}" ;;
+      curl_max_time_seconds=*) curl_max_time="${argument#*=}" ;;
+      curl_insecure=*) curl_insecure="${argument#*=}" ;;
+      *)
+        printf 'Unknown argument: %q\n' "$argument" >&2
+        return 2
+        ;;
+    esac
+  done
+}
+
+if (($# > 1)); then
+  parse_workflow_arguments "${@:2}" || exit $?
+fi
+
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   green=$'\033[0;32m'
   red=$'\033[0;31m'
@@ -490,7 +525,7 @@ case "$action" in
     :
     ;;
   *)
-    printf 'Usage: %s {check|apply|verify|rollback}\n' "$0" >&2
+    printf 'Usage: %s {check|apply|verify|rollback} [key=value ...]\n' "$0" >&2
     exit 2
     ;;
 esac

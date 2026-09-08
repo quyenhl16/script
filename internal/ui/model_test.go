@@ -333,6 +333,52 @@ func TestWorkflowLoadsIntoSSHForm(t *testing.T) {
 	}
 }
 
+func TestLocalWorkflowStartsWithoutSSHServer(t *testing.T) {
+	featuresRoot := t.TempDir()
+	writeDashboardFeature(t, featuresRoot, "local-check", `,"workflowCompatible":true`)
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflowsRoot := t.TempDir()
+	workflowDirectory := filepath.Join(workflowsRoot, "local-validation")
+	if err := os.MkdirAll(workflowDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{
+  "apiVersion":"syssetup/workflow/v1", "id":"local-validation", "name":"Local Validation", "version":"1",
+  "executionMode":"local", "steps":[{"id":"check", "feature":"local-check"}]
+}`
+	if err := os.WriteFile(filepath.Join(workflowDirectory, "workflow.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	workflowRegistry, err := workflow.Load(workflowsRoot, features)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(t.TempDir(), "local-validation.json")
+	config := `{
+  "apiVersion":"syssetup/workflow-config/v1", "workflow":"local-validation",
+  "steps":{"check":[{"args":["verify"]}]}
+}`
+	if err := os.WriteFile(configPath, []byte(config), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	m := newModelWithWorkflows(context.Background(), features, workflowRegistry, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{})
+	m.loadCurrentWorkflow()
+	m.sshInputs[sshWorkflowConfig].SetValue(configPath)
+	if got := m.sshFieldOrder(); len(got) != 1 || got[0] != sshWorkflowConfig {
+		t.Fatalf("local workflow fields = %#v, want config only", got)
+	}
+	if command := m.startRemoteRun(); command == nil {
+		t.Fatal("local workflow did not start")
+	}
+	if m.remoteErr != nil || !m.remoteRunning || !strings.Contains(m.notice, "locally") {
+		t.Fatalf("local workflow state: running=%t notice=%q err=%v", m.remoteRunning, m.notice, m.remoteErr)
+	}
+}
+
 func TestProfileCanBeSwitchedWithoutRestartingTUI(t *testing.T) {
 	root := t.TempDir()
 	writeDashboardFeature(t, root, "base", "")

@@ -79,17 +79,24 @@ Runner truyền parameter dưới dạng `SYSSETUP_PARAM_<NAME>`. Không dùng `
 ## Workflow API v1
 
 Manifest dùng `apiVersion: syssetup/workflow/v1`. Mỗi step tham chiếu một
-`remoteOnly` feature và chỉ được phụ thuộc step đã khai báo trước. Config
+feature `remoteOnly` hoặc feature local đã chủ động bật `workflowCompatible`, và
+chỉ được phụ thuộc step đã khai báo trước. Config
 `syssetup/workflow-config/v1` chứa danh sách invocation/args. `deriveArgs` cho
 phép step sau thu thập argument theo prefix hoặc vị trí từ config của step trước
 mà không lặp lại dữ liệu, ví dụ lấy argument đầu tiên (tên interface) của
 `create-vlan` cho `verify-network`. `argumentIndex` sử dụng chỉ số bắt đầu từ `0`.
+`failurePolicy` hỗ trợ `stop-server` (mặc định) và `continue`; chính sách `continue`
+vẫn đánh dấu server thất bại nhưng tiếp tục chạy invocation và step kế tiếp.
+`executionMode` mặc định là `remote`; giá trị `local` chạy tuần tự ngay trên máy
+đang chạy `syssetup`, không yêu cầu danh sách server hay thông tin SSH và chỉ cho
+phép feature đã bật `workflowCompatible`.
 
-Mỗi invocation có thể khai báo `artifacts` gồm `id` và local `source`. Executor
-đọc và giới hạn kích thước file trước khi kết nối, mã hóa nội dung vào stdin của
-SSH, tạo file tạm với `umask 077`, export đường dẫn qua biến
-`SYSSETUP_ARTIFACT_<ID>` và xóa toàn bộ thư mục tạm bằng `trap` sau khi feature
-kết thúc. Đường dẫn tương đối được resolve từ thư mục chứa workflow config.
+Mỗi invocation có thể khai báo `artifacts` gồm `id` và local `source`. Với remote
+workflow, executor mã hóa nội dung vào stdin SSH, tạo file tạm với `umask 077`,
+export đường dẫn qua biến `SYSSETUP_ARTIFACT_<ID>` rồi xóa bằng `trap`. Với local
+workflow, biến này trỏ thẳng đến đường dẫn tuyệt đối của file nguồn. Cả hai chế
+độ đều kiểm tra file và giới hạn kích thước trước khi chạy; đường dẫn tương đối
+được resolve từ thư mục chứa workflow config.
 
 ## Mở rộng ngoài repo
 

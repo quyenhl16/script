@@ -2,11 +2,12 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Audit pod VIPs, OSPF adjacencies, ping paths and HTTP connectivity to peer NFs",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
+  "workflowCompatible": true,
   "timeoutSeconds": 900,
   "dependsOn": ["check-os"],
   "parameters": {
