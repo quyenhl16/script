@@ -1,7 +1,7 @@
 {
   "apiVersion": "syssetup/v1",
   "name": "pramf01-connectivity",
-  "description": "VIP, OSPF and 5G connectivity audit for namespace pramf01",
+  "description": "VIP, OSPF, ping and peer NF HTTP connectivity audit for namespace pramf01",
   "features": [
     {
       "id": "k8s-connectivity-check",
@@ -16,7 +16,15 @@
         "ip_smf": "68.240.36.105",
         "ip_amf_remote": "68.240.36.9",
         "ip_nrf": "68.240.36.193",
-        "ip_gnodeb": "69.69.0.150"
+        "ip_gnodeb": "69.69.0.150",
+        "curl_ausf_urls": "http://68.240.36.153/",
+        "curl_udm_urls": "http://68.240.36.153/",
+        "curl_smf_urls": "http://68.240.36.105/",
+        "curl_amf_remote_urls": "http://68.240.36.9/",
+        "curl_nrf_urls": "http://68.240.36.193/",
+        "curl_connect_timeout_seconds": 3,
+        "curl_max_time_seconds": 10,
+        "curl_insecure": false
       }
     }
   ]

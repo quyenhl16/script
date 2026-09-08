@@ -39,7 +39,7 @@ Kiểm tra VIP, OSPF và kết nối mạng của workload Kubernetes `pramf01`:
 ./bin/syssetup run --profile profiles/01HTX/pramf01-connectivity.json
 ```
 
-Đổi `phase` trong profile thành `vip`, `ospf`, `ping` hoặc `all` để chọn
+Đổi `phase` trong profile thành `vip`, `ospf`, `ping`, `curl` hoặc `all` để chọn
 phạm vi kiểm tra. Namespace, VIP và địa chỉ NF đích đều có thể cấu hình trong
 `parameters` của feature `k8s-connectivity-check`.
 
@@ -56,8 +56,32 @@ IPGW pod sẽ ping từng địa chỉ gNodeB. Cấu hình một IP cũ vẫn đ
 }
 ```
 
-Kiểm tra danh sách service bắt buộc của namespace `pramf01` và kết nối đến mọi
-cổng TCP qua ClusterIP (hoặc endpoint IP đối với headless service):
+Phase `curl` chạy từ từng MM pod đến các URL của AUSF, UDM, SMF, AMF remote và
+NRF. Mỗi tham số `curl_*_urls` nhận một hoặc nhiều URL HTTP(S), cho phép khai báo
+port và path riêng cho từng NF:
+
+```json
+{
+  "phase": "curl",
+  "curl_ausf_urls": "http://192.0.2.10:8080/health http://192.0.2.11:8080/health",
+  "curl_udm_urls": "https://192.0.2.20:8443/health",
+  "curl_smf_urls": "http://192.0.2.30:8080/",
+  "curl_amf_remote_urls": "http://192.0.2.35:8080/health",
+  "curl_nrf_urls": "http://192.0.2.40:8080/nnrf-nfm/v1/nf-instances",
+  "curl_connect_timeout_seconds": 3,
+  "curl_max_time_seconds": 10,
+  "curl_insecure": false
+}
+```
+
+Bất kỳ HTTP status từ `100` đến `599` đều được coi là kết nối thành công vì
+phase này kiểm tra DNS/TCP/TLS/HTTP, không kiểm tra nghiệp vụ của API. Lỗi timeout,
+connection refused, DNS hoặc TLS sẽ báo FAIL. Với chứng thư nội bộ chưa được tin
+cậy, có thể đặt `curl_insecure` thành `true`.
+
+Kiểm tra danh sách service bắt buộc của namespace `pramf01`, ready endpoint,
+External IP kỳ vọng và kết nối đến mọi cổng TCP qua ClusterIP (hoặc endpoint IP
+đối với headless service):
 
 ```bash
 ./bin/syssetup plan --profile profiles/01HTX/pramf01-services.json
@@ -68,10 +92,23 @@ Feature `k8s-service-check` dùng `curl` với giao thức telnet để chỉ ki
 tay TCP, không yêu cầu dịch vụ phải chạy HTTP. Nếu không có `curl`, feature dùng
 `telnet` kết hợp `timeout`. Mặc định `probe_targets` là `all`, nên cả ClusterIP và
 External IP đều được kiểm tra; đặt thành `cluster` hoặc `external` để giới hạn
-phạm vi. Headless service không có IP ảo được kiểm tra qua từng endpoint IP. UDP,
-SCTP và service không khai báo port chỉ được kiểm tra sự tồn tại. Tham số
-`services` nhận tên phân cách bằng dấu phẩy hoặc khoảng trắng; đặt `tcp_probe`
-thành `false` nếu chỉ muốn kiểm tra tên service.
+phạm vi. Mọi service bắt buộc phải có ít nhất một địa chỉ ready trong resource
+Endpoints; headless service không có IP ảo được TCP probe qua từng endpoint IP.
+Kiểm tra endpoint và External IP vẫn chạy khi `tcp_probe=false`.
+
+Tham số `external_ip_expectations` chỉ định các service cần kiểm tra External IP
+theo cú pháp `service=ip[,ip];service=ip`. Tập IP thực tế phải khớp chính xác,
+không phụ thuộc thứ tự:
+
+```json
+{
+  "external_ip_expectations": "comm-sbi=192.168.5.90;nm-loadbalancer-svc=192.168.5.90,68.240.20.130"
+}
+```
+
+UDP, SCTP và service không khai báo TCP port vẫn được kiểm tra sự tồn tại,
+endpoint và External IP nếu có cấu hình. Tham số `services` nhận tên phân cách
+bằng dấu phẩy hoặc khoảng trắng.
 
 Kiểm tra environment của Deployment, StatefulSet và DaemonSet theo ma trận Excel:
 
@@ -83,11 +120,16 @@ cp /path/to/pramf01-input_100K.xlsx .
 
 Feature `k8s-env-check` đọc sheet `VDU`: cột B chứa thuộc tính bắt đầu bằng
 `environments_`, cột C chứa tên ENV Kubernetes chính xác, và các cột từ D trở đi
-chứa giá trị kỳ vọng của từng component. Ô trống nghĩa là ENV không áp dụng;
+chứa giá trị kỳ vọng của từng component. Chỉ những dòng đã khai tên ENV trong
+cột C mới được so sánh; dòng có cột C trống được bỏ qua dù các cột service có dữ
+liệu. Ô service trống nghĩa là ENV không áp dụng cho component đó;
 `<PRESENT>` chỉ kiểm tra sự tồn tại, `<EMPTY>` yêu cầu giá trị rỗng,
 `<REGEX:...>` kiểm tra bằng biểu thức chính quy, còn
 `<SECRET:name/key>`/`<CONFIGMAP:name/key>` kiểm tra nguồn tham chiếu mà không ghi
 giá trị nhạy cảm ra output.
+
+Khi giá trị không khớp, kết quả hiển thị cả `expected`, `actual` và ô Excel nguồn.
+Giá trị lấy từ Kubernetes Secret vẫn được che và chỉ hiển thị tên Secret/key.
 
 Tên component được tự đổi `_` thành `-` và đối chiếu với workload/container. Nếu
 không thể suy luận duy nhất, cấu hình `mapping_file` theo mẫu

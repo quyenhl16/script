@@ -2,8 +2,8 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-service-check",
   "name": "Kubernetes service check",
-  "version": "1.0.0",
-  "description": "Verify required Kubernetes services and probe their TCP ports",
+  "version": "1.1.0",
+  "description": "Verify required services, ready endpoints, expected External IPs and TCP connectivity",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
@@ -19,6 +19,11 @@
       "type": "string",
       "description": "Required service names, separated by commas or spaces",
       "default": "aerospike comm-sbi dns dns-http ebm-svc-udp gtp-http mm mm-controller-external mm-controller-internal netconf nm-loadbalancer-svc nm-postgres nm-postgres-config nm-postgres-repl redis redis-sentinel sctp-http sctp-sctp-field"
+    },
+    "external_ip_expectations": {
+      "type": "string",
+      "description": "Expected External IP sets using service=ip[,ip];service=ip syntax",
+      "default": ""
     },
     "tcp_probe": {
       "type": "boolean",

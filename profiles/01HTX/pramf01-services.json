@@ -1,13 +1,14 @@
 {
   "apiVersion": "syssetup/v1",
   "name": "pramf01-services",
-  "description": "Required Kubernetes services and TCP connectivity checks for pramf01",
+  "description": "Required services, endpoints, External IPs and TCP connectivity checks for pramf01",
   "features": [
     {
       "id": "k8s-service-check",
       "parameters": {
         "namespace": "pramf01",
         "services": "aerospike comm-sbi dns dns-http ebm-svc-udp gtp-http mm mm-controller-external mm-controller-internal netconf nm-loadbalancer-svc nm-postgres nm-postgres-config nm-postgres-repl redis redis-sentinel sctp-http sctp-sctp-field",
+        "external_ip_expectations": "comm-sbi=192.168.5.90;dns-http=192.168.5.90;ebm-svc-udp=192.168.5.90;gtp-http=10.0.1.100;mm-controller-external=192.168.5.90;nm-loadbalancer-svc=192.168.5.90,68.240.20.130;sctp-http=10.55.71.52",
         "tcp_probe": true,
         "probe_targets": "all",
         "connect_timeout": 3

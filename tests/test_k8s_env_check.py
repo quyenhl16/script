@@ -115,19 +115,25 @@ class ExcelBaselineTests(unittest.TestCase):
         self.assertEqual(baseline["components"]["comm"]["DYNAMIC_VALUE"]["mode"], "present")
         self.assertEqual(baseline["components"]["comm"]["COUNT"]["value"], "2")
 
-    def test_rejects_populated_service_row_without_env_name(self):
+    def test_skips_populated_service_row_without_env_name(self):
         with tempfile.TemporaryDirectory() as directory:
             path = os.path.join(directory, "baseline.xlsx")
             write_workbook(path, include_env_name=False)
-            with self.assertRaisesRegex(self.checker.InputError, "no Kubernetes ENV name"):
-                self.checker.read_baseline(baseline_arguments(path))
+            baseline = self.checker.read_baseline(baseline_arguments(path))
+
+        self.assertEqual(baseline["attribute_rows"], 4)
+        self.assertEqual(baseline["environment_rows"], 3)
+        self.assertEqual(baseline["skipped_unnamed_rows"], 1)
+        self.assertEqual(baseline["expected_count"], 3)
+        self.assertNotIn("NAMESPACE", baseline["components"]["comm"])
+        self.assertNotIn("NAMESPACE", baseline["components"]["mm_controller"])
 
 
 class AuditTests(unittest.TestCase):
     def setUp(self):
         self.checker = load_checker()
 
-    def test_reports_match_mismatch_and_extra_without_values(self):
+    def test_reports_expected_and_actual_for_mismatch(self):
         workloads = [
             {
                 "kind": "Deployment",
@@ -146,7 +152,7 @@ class AuditTests(unittest.TestCase):
                 "metadata": {"name": "mm-controller", "labels": {}},
                 "spec": {"template": {"spec": {"containers": [{
                     "name": "mm-controller",
-                    "env": [{"name": "NAMESPACE", "value": "wrong-secret-value"}],
+                    "env": [{"name": "NAMESPACE", "value": "wrong-value"}],
                 }]}}},
             },
         ]
@@ -184,9 +190,23 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(stats["extra"], 1)
         self.assertEqual(stats["failures"], 1)
         self.assertIn("[FAIL] [MISMATCH] mm_controller/NAMESPACE", rendered)
+        self.assertIn('expected="pramf01" actual="wrong-value" source=E2', rendered)
         self.assertIn("[WARN] [EXTRA] comm/EXTRA_ENV", rendered)
         self.assertNotIn("must-not-be-printed", rendered)
-        self.assertNotIn("wrong-secret-value", rendered)
+
+    def test_masks_secret_value_in_mismatch_output(self):
+        actual = self.checker.actual_value(
+            "secret-value",
+            kind="Secret",
+            name="app-secret",
+            key="password",
+            sensitive=True,
+        )
+
+        rendered = self.checker.display_actual(actual)
+
+        self.assertEqual(rendered, "<SECRET:app-secret/password>")
+        self.assertNotIn("secret-value", rendered)
 
     def test_resolves_env_from_configmap_and_secret_key_reference(self):
         class FakeResolver:

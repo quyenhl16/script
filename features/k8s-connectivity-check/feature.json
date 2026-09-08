@@ -2,8 +2,8 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.1.0",
-  "description": "Audit pod VIPs, OSPF adjacencies and 5G network connectivity",
+  "version": "1.2.0",
+  "description": "Audit pod VIPs, OSPF adjacencies, ping paths and HTTP connectivity to peer NFs",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
@@ -12,7 +12,7 @@
   "parameters": {
     "phase": {
       "type": "string",
-      "description": "Checklist phase: vip, ospf, ping or all",
+      "description": "Checklist phase: vip, ospf, ping, curl or all",
       "default": "all"
     },
     "namespace": {
@@ -64,6 +64,46 @@
       "type": "string",
       "description": "gNodeB IPv4 list, separated by commas or spaces",
       "default": "69.69.0.150"
+    },
+    "curl_ausf_urls": {
+      "type": "string",
+      "description": "AUSF HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.36.153/"
+    },
+    "curl_udm_urls": {
+      "type": "string",
+      "description": "UDM HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.36.153/"
+    },
+    "curl_smf_urls": {
+      "type": "string",
+      "description": "SMF HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.36.105/"
+    },
+    "curl_amf_remote_urls": {
+      "type": "string",
+      "description": "Remote AMF HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.36.9/"
+    },
+    "curl_nrf_urls": {
+      "type": "string",
+      "description": "NRF HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.36.193/"
+    },
+    "curl_connect_timeout_seconds": {
+      "type": "integer",
+      "description": "Maximum time to establish each NF HTTP connection",
+      "default": 3
+    },
+    "curl_max_time_seconds": {
+      "type": "integer",
+      "description": "Maximum total time for each NF HTTP request",
+      "default": 10
+    },
+    "curl_insecure": {
+      "type": "boolean",
+      "description": "Disable TLS certificate verification for HTTPS NF URLs",
+      "default": false
     }
   }
 }

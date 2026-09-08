@@ -4,6 +4,7 @@ set -uo pipefail
 action="${1:-}"
 namespace="${SYSSETUP_PARAM_NAMESPACE:-pramf01}"
 expected_services="${SYSSETUP_PARAM_SERVICES:-aerospike comm-sbi dns dns-http ebm-svc-udp gtp-http mm mm-controller-external mm-controller-internal netconf nm-loadbalancer-svc nm-postgres nm-postgres-config nm-postgres-repl redis redis-sentinel sctp-http sctp-sctp-field}"
+external_ip_expectations="${SYSSETUP_PARAM_EXTERNAL_IP_EXPECTATIONS:-}"
 tcp_probe="${SYSSETUP_PARAM_TCP_PROBE:-true}"
 probe_targets="${SYSSETUP_PARAM_PROBE_TARGETS:-all}"
 connect_timeout="${SYSSETUP_PARAM_CONNECT_TIMEOUT:-3}"
@@ -25,8 +26,11 @@ fi
 checks=0
 failures=0
 tcp_checks=0
+endpoint_checks=0
+external_ip_checks=0
 services=()
 tcp_client=''
+declare -A expected_external_ip_map=()
 
 heading() {
   printf '%s=========================================================%s\n' "$blue" "$reset"
@@ -47,6 +51,90 @@ fail() {
 
 skip() {
   printf '    %s[SKIP]%s %s\n' "$yellow" "$reset" "$1"
+}
+
+trim_whitespace() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+validate_ipv4() {
+  local address="$1"
+  local octet
+  local -a octets
+
+  [[ "$address" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  IFS='.' read -r -a octets <<< "$address"
+  [[ ${#octets[@]} -eq 4 ]] || return 1
+  for octet in "${octets[@]}"; do
+    ((10#$octet <= 255)) || return 1
+  done
+}
+
+parse_external_ip_expectations() {
+  local entry
+  local service
+  local address_text
+  local address
+  local normalized
+  local -a entries
+  local -a addresses
+  declare -A seen_addresses=()
+
+  expected_external_ip_map=()
+  [[ -z "$(trim_whitespace "$external_ip_expectations")" ]] && return 0
+  if [[ "$external_ip_expectations" == *$'\n'* || "$external_ip_expectations" == *$'\r'* ]]; then
+    printf 'external_ip_expectations must not contain line breaks\n' >&2
+    return 2
+  fi
+
+  IFS=';' read -r -a entries <<< "$external_ip_expectations"
+  for entry in "${entries[@]}"; do
+    entry="$(trim_whitespace "$entry")"
+    [[ -z "$entry" ]] && continue
+    if [[ "$entry" != *=* ]]; then
+      printf 'Invalid external IP expectation %q; expected service=ip[,ip]\n' "$entry" >&2
+      return 2
+    fi
+    service="$(trim_whitespace "${entry%%=*}")"
+    address_text="$(trim_whitespace "${entry#*=}")"
+    if [[ ${#service} -gt 63 || ! "$service" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ ]]; then
+      printf 'Invalid service name in external IP expectation: %q\n' "$service" >&2
+      return 2
+    fi
+    if [[ -z "${seen[$service]:-}" ]]; then
+      printf 'External IP expectation references unknown service %q\n' "$service" >&2
+      return 2
+    fi
+    if [[ -n "${expected_external_ip_map[$service]+set}" ]]; then
+      printf 'Duplicate external IP expectation for service %q\n' "$service" >&2
+      return 2
+    fi
+
+    addresses=()
+    read -r -a addresses <<< "${address_text//,/ }"
+    if ((${#addresses[@]} == 0)); then
+      printf 'External IP expectation for service %q must not be empty\n' "$service" >&2
+      return 2
+    fi
+    seen_addresses=()
+    normalized=''
+    for address in "${addresses[@]}"; do
+      if ! validate_ipv4 "$address"; then
+        printf 'Invalid expected External IP for service %s: %q\n' "$service" "$address" >&2
+        return 2
+      fi
+      if [[ -n "${seen_addresses[$address]:-}" ]]; then
+        printf 'Duplicate expected External IP for service %s: %q\n' "$service" "$address" >&2
+        return 2
+      fi
+      seen_addresses[$address]=1
+      normalized+="${normalized:+ }$address"
+    done
+    expected_external_ip_map[$service]="$normalized"
+  done
 }
 
 validate_configuration() {
@@ -93,6 +181,7 @@ validate_configuration() {
     fi
     seen[$service]=1
   done
+  parse_external_ip_expectations || return
 }
 
 preflight() {
@@ -167,6 +256,78 @@ probe_tcp_target() {
   fi
 }
 
+check_service_endpoints() {
+  local service="$1"
+  local endpoint_data
+  local address
+  local display
+  local -a endpoint_addresses=()
+  declare -A seen_addresses=()
+
+  endpoint_checks=$((endpoint_checks + 1))
+  if ! endpoint_data="$(kubectl get endpoints "$service" -n "$namespace" -o \
+    'jsonpath={range .subsets[*].addresses[*]}{.ip}{"\n"}{end}' 2>/dev/null)"; then
+    fail "Service [$service]: endpoints could not be read"
+    return 1
+  fi
+  while IFS= read -r address; do
+    [[ -z "$address" || -n "${seen_addresses[$address]:-}" ]] && continue
+    seen_addresses[$address]=1
+    endpoint_addresses+=("$address")
+  done <<< "$endpoint_data"
+
+  if ((${#endpoint_addresses[@]} == 0)); then
+    fail "Service [$service]: no ready endpoint address was found"
+    return 1
+  fi
+  display="$(IFS=,; printf '%s' "${endpoint_addresses[*]}")"
+  pass "Service [$service]: ready endpoint(s): $display"
+  return 0
+}
+
+check_external_ips() {
+  local service="$1"
+  shift
+  local expected_text
+  local expected_ip
+  local actual_ip
+  local expected_display
+  local actual_display
+  local -a expected_ips
+  local -a actual_ips=("$@")
+  local -a missing_ips=()
+  local -a unexpected_ips=()
+  declare -A expected_set=()
+  declare -A actual_set=()
+
+  [[ -n "${expected_external_ip_map[$service]+set}" ]] || return 0
+  external_ip_checks=$((external_ip_checks + 1))
+  expected_text="${expected_external_ip_map[$service]}"
+  read -r -a expected_ips <<< "$expected_text"
+  for expected_ip in "${expected_ips[@]}"; do
+    expected_set[$expected_ip]=1
+  done
+  for actual_ip in "${actual_ips[@]}"; do
+    [[ -z "$actual_ip" ]] && continue
+    actual_set[$actual_ip]=1
+  done
+  for expected_ip in "${expected_ips[@]}"; do
+    [[ -n "${actual_set[$expected_ip]:-}" ]] || missing_ips+=("$expected_ip")
+  done
+  for actual_ip in "${actual_ips[@]}"; do
+    [[ -n "${expected_set[$actual_ip]:-}" ]] || unexpected_ips+=("$actual_ip")
+  done
+
+  expected_display="$(IFS=,; printf '%s' "${expected_ips[*]}")"
+  actual_display="$(IFS=,; printf '%s' "${actual_ips[*]}")"
+  [[ -n "$actual_display" ]] || actual_display='None'
+  if ((${#missing_ips[@]} == 0 && ${#unexpected_ips[@]} == 0)); then
+    pass "Service [$service]: External IP matches expected=[$expected_display]"
+  else
+    fail "Service [$service]: External IP mismatch expected=[$expected_display] actual=[$actual_display]"
+  fi
+}
+
 probe_headless_service() {
   local service="$1"
   local endpoint_data
@@ -227,15 +388,18 @@ check_service() {
   local cluster_ip
   local external_data
   local external_label
+  local endpoints_ready=false
   local address
   local line
   local protocol
   local port
   local -a service_lines
   local -a tcp_ports=()
+  local -a raw_external_addresses=()
   local -a external_addresses=()
   local -a probe_addresses=()
-  declare -A seen_addresses=()
+  declare -A seen_external_addresses=()
+  declare -A seen_probe_addresses=()
 
   if ! service_data="$(kubectl get service "$service" -n "$namespace" -o \
     'jsonpath={.spec.clusterIP}{"\n"}{range .spec.externalIPs[*]}{.}{"|"}{end}{range .status.loadBalancer.ingress[*]}{.ip}{.hostname}{"|"}{end}{"\n"}{range .spec.ports[*]}{.protocol}{"|"}{.port}{"\n"}{end}' 2>/dev/null)"; then
@@ -245,10 +409,19 @@ check_service() {
   mapfile -t service_lines <<< "$service_data"
   cluster_ip="${service_lines[0]:-None}"
   external_data="${service_lines[1]:-}"
-  IFS='|' read -r -a external_addresses <<< "$external_data"
-  external_label="${external_data%|}"
+  IFS='|' read -r -a raw_external_addresses <<< "$external_data"
+  for address in "${raw_external_addresses[@]}"; do
+    [[ -z "$address" || -n "${seen_external_addresses[$address]:-}" ]] && continue
+    seen_external_addresses[$address]=1
+    external_addresses+=("$address")
+  done
+  external_label="$(IFS=,; printf '%s' "${external_addresses[*]}")"
   [[ -n "$external_label" ]] || external_label='None'
   pass "Service [$service] exists (ClusterIP: ${cluster_ip:-None}, External: $external_label)"
+  check_external_ips "$service" "${external_addresses[@]}"
+  if check_service_endpoints "$service"; then
+    endpoints_ready=true
+  fi
 
   if [[ "$tcp_probe" != true ]]; then
     return
@@ -266,20 +439,24 @@ check_service() {
   fi
 
   if [[ "$probe_targets" != external && -n "$cluster_ip" && "$cluster_ip" != None ]]; then
-    seen_addresses[$cluster_ip]=1
+    seen_probe_addresses[$cluster_ip]=1
     probe_addresses+=("$cluster_ip")
   fi
   if [[ "$probe_targets" != cluster ]]; then
     for address in "${external_addresses[@]}"; do
-      [[ -z "$address" || -n "${seen_addresses[$address]:-}" ]] && continue
-      seen_addresses[$address]=1
+      [[ -z "$address" || -n "${seen_probe_addresses[$address]:-}" ]] && continue
+      seen_probe_addresses[$address]=1
       probe_addresses+=("$address")
     done
   fi
 
   if ((${#probe_addresses[@]} == 0)) && \
      [[ "$probe_targets" != external && ( -z "$cluster_ip" || "$cluster_ip" == None ) ]]; then
-    probe_headless_service "$service"
+    if [[ "$endpoints_ready" == true ]]; then
+      probe_headless_service "$service"
+    else
+      skip "Service [$service]: headless TCP probe skipped because no ready endpoint exists"
+    fi
     return
   fi
   if ((${#probe_addresses[@]} == 0)); then
@@ -302,8 +479,8 @@ run_service_checks() {
     check_service "$service"
   done
 
-  printf '\nService check completed: expected=%d tcp_probes=%d checks=%d failures=%d.\n' \
-    "${#services[@]}" "$tcp_checks" "$checks" "$failures"
+  printf '\nService check completed: expected=%d endpoint_checks=%d external_ip_checks=%d tcp_probes=%d checks=%d failures=%d.\n' \
+    "${#services[@]}" "$endpoint_checks" "$external_ip_checks" "$tcp_checks" "$checks" "$failures"
   ((failures == 0))
 }
 

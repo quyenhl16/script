@@ -16,6 +16,15 @@ ip_amf_remote="${SYSSETUP_PARAM_IP_AMF_REMOTE:-68.240.36.9}"
 ip_nrf="${SYSSETUP_PARAM_IP_NRF:-68.240.36.193}"
 ip_gnodeb="${SYSSETUP_PARAM_IP_GNODEB:-69.69.0.150}"
 
+curl_ausf_urls="${SYSSETUP_PARAM_CURL_AUSF_URLS:-http://68.240.36.153/}"
+curl_udm_urls="${SYSSETUP_PARAM_CURL_UDM_URLS:-http://68.240.36.153/}"
+curl_smf_urls="${SYSSETUP_PARAM_CURL_SMF_URLS:-http://68.240.36.105/}"
+curl_amf_remote_urls="${SYSSETUP_PARAM_CURL_AMF_REMOTE_URLS:-http://68.240.36.9/}"
+curl_nrf_urls="${SYSSETUP_PARAM_CURL_NRF_URLS:-http://68.240.36.193/}"
+curl_connect_timeout="${SYSSETUP_PARAM_CURL_CONNECT_TIMEOUT_SECONDS:-3}"
+curl_max_time="${SYSSETUP_PARAM_CURL_MAX_TIME_SECONDS:-10}"
+curl_insecure="${SYSSETUP_PARAM_CURL_INSECURE:-false}"
+
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
   green=$'\033[0;32m'
   red=$'\033[0;31m'
@@ -83,6 +92,37 @@ validate_ipv4_list() {
   done
 }
 
+validate_url_list() {
+  local name="$1"
+  local value="$2"
+  local url
+  local authority
+  local normalized="${value//,/ }"
+  local -a urls
+
+  if [[ "$value" == *$'\n'* || "$value" == *$'\r'* ]]; then
+    printf 'URL list for %s must not contain line breaks\n' "$name" >&2
+    return 1
+  fi
+  read -r -a urls <<< "$normalized"
+  if ((${#urls[@]} == 0)); then
+    printf 'URL list for %s must not be empty\n' "$name" >&2
+    return 1
+  fi
+  for url in "${urls[@]}"; do
+    if [[ ! "$url" =~ ^https?://[^/[:space:],]+(/[^[:space:],]*)?$ ]]; then
+      printf 'Invalid HTTP(S) URL in %s: %q\n' "$name" "$url" >&2
+      return 1
+    fi
+    authority="${url#*://}"
+    authority="${authority%%/*}"
+    if [[ "$authority" == *@* ]]; then
+      printf 'URL userinfo is not allowed in %s: %q\n' "$name" "$url" >&2
+      return 1
+    fi
+  done
+}
+
 validate_configuration() {
   local name
   local value
@@ -100,11 +140,18 @@ validate_configuration() {
     "ip_nrf=$ip_nrf"
     "ip_gnodeb=$ip_gnodeb"
   )
+  local -a url_list_settings=(
+    "curl_ausf_urls=$curl_ausf_urls"
+    "curl_udm_urls=$curl_udm_urls"
+    "curl_smf_urls=$curl_smf_urls"
+    "curl_amf_remote_urls=$curl_amf_remote_urls"
+    "curl_nrf_urls=$curl_nrf_urls"
+  )
 
   case "$phase" in
-    vip|ospf|ping|all) ;;
+    vip|ospf|ping|curl|all) ;;
     *)
-      printf 'Invalid phase %q; expected vip, ospf, ping or all\n' "$phase" >&2
+      printf 'Invalid phase %q; expected vip, ospf, ping, curl or all\n' "$phase" >&2
       return 2
       ;;
   esac
@@ -128,6 +175,25 @@ validate_configuration() {
     value="${setting#*=}"
     validate_ipv4_list "$name" "$value" || return 2
   done
+
+  for setting in "${url_list_settings[@]}"; do
+    name="${setting%%=*}"
+    value="${setting#*=}"
+    validate_url_list "$name" "$value" || return 2
+  done
+
+  if [[ ! "$curl_connect_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'curl_connect_timeout_seconds must be a positive integer\n' >&2
+    return 2
+  fi
+  if [[ ! "$curl_max_time" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'curl_max_time_seconds must be a positive integer\n' >&2
+    return 2
+  fi
+  if [[ "$curl_insecure" != true && "$curl_insecure" != false ]]; then
+    printf 'curl_insecure must be true or false\n' >&2
+    return 2
+  fi
 }
 
 preflight() {
@@ -301,17 +367,104 @@ phase_check_connectivity() {
   fi
 }
 
+url_for_log() {
+  local value="$1"
+  value="${value%%\?*}"
+  value="${value%%#*}"
+  printf '%s' "$value"
+}
+
+curl_from_pod() {
+  local pod="$1"
+  local url="$2"
+  local response
+  local http_code
+  local status
+  local detail
+  local display_url
+  local -a curl_args=(
+    curl
+    --silent
+    --show-error
+    --output /dev/null
+    --write-out $'\n%{http_code}'
+    --connect-timeout "$curl_connect_timeout"
+    --max-time "$curl_max_time"
+  )
+
+  if [[ "$curl_insecure" == true ]]; then
+    curl_args+=(--insecure)
+  fi
+  response="$(kubectl exec -n "$namespace" "$pod" -- "${curl_args[@]}" "$url" 2>&1)"
+  status=$?
+  http_code="${response##*$'\n'}"
+  display_url="$(url_for_log "$url")"
+
+  if ((status == 0)) && [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
+    pass "Pod [$pod]: $display_url is reachable (HTTP $http_code)"
+    return
+  fi
+
+  detail="${response//$'\r'/ }"
+  detail="${detail//$'\n'/ }"
+  detail="${detail:0:240}"
+  [[ -n "$detail" ]] || detail="curl exited with status $status"
+  fail "Pod [$pod]: $display_url is unreachable ($detail)"
+}
+
+phase_check_http() {
+  local pod
+  local nf_name
+  local url
+  local -a mm_pods
+  local -a target_urls
+  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF)
+  declare -A nf_urls=(
+    [AUSF]="$curl_ausf_urls"
+    [UDM]="$curl_udm_urls"
+    [SMF]="$curl_smf_urls"
+    [AMF_REMOTE]="$curl_amf_remote_urls"
+    [NRF]="$curl_nrf_urls"
+  )
+
+  heading '[PHASE 4] VERIFYING PEER NF HTTP CONNECTIVITY (CURL)'
+  mapfile -t mm_pods < <(get_running_pods mm)
+  if ((${#mm_pods[@]} == 0)); then
+    fail 'No running MM pods found for peer NF curl checks'
+    return
+  fi
+
+  for pod in "${mm_pods[@]}"; do
+    printf '\n  Pod: [%s]\n' "$pod"
+    if ! kubectl exec -n "$namespace" "$pod" -- curl --version >/dev/null 2>&1; then
+      fail "Pod [$pod]: curl is not available in the selected container"
+      continue
+    fi
+    for nf_name in "${nf_names[@]}"; do
+      target_urls=()
+      read -r -a target_urls <<< "${nf_urls[$nf_name]//,/ }"
+      for url in "${target_urls[@]}"; do
+        printf '  NF: %-10s ' "$nf_name"
+        curl_from_pod "$pod" "$url"
+      done
+    done
+  done
+}
+
 run_checklist() {
   case "$phase" in
     vip) phase_check_vip ;;
     ospf) phase_check_ospf ;;
     ping) phase_check_connectivity ;;
+    curl) phase_check_http ;;
     all)
       phase_check_vip
       printf '\n'
       phase_check_ospf
       printf '\n'
       phase_check_connectivity
+      printf '\n'
+      phase_check_http
       ;;
   esac
 

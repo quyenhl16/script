@@ -16,6 +16,7 @@ MAX_XLSX_SIZE = 50 * 1024 * 1024
 MAX_UNCOMPRESSED_SIZE = 250 * 1024 * 1024
 MAX_ARCHIVE_ENTRIES = 10000
 COMMAND_TIMEOUT = 60
+MAX_DISPLAY_LENGTH = 256
 ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 CELL_REFERENCE_PATTERN = re.compile(r"^([A-Za-z]+)([0-9]+)$")
 MAIN_NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
@@ -241,13 +242,25 @@ def read_baseline(arguments):
         raise InputError("no service columns were found in worksheet {}".format(arguments.sheet))
 
     formula_cells = []
+    attribute_rows = 0
     environment_rows = 0
+    skipped_unnamed_rows = 0
     maximum_row = max((row for row, _ in cells), default=arguments.header_row)
     for row in range(arguments.header_row + 1, maximum_row + 1):
         attribute = cells.get((row, attribute_column), {}).get("value", "").strip()
         if not attribute.startswith(arguments.attribute_prefix):
             continue
+        attribute_rows += 1
+
+        env_cell = cells.get((row, env_name_column))
+        env_name = "" if env_cell is None else env_cell["value"].strip()
+        if not env_name:
+            skipped_unnamed_rows += 1
+            continue
         environment_rows += 1
+        if not ENV_NAME_PATTERN.match(env_name):
+            raise InputError("{}{} contains invalid Kubernetes ENV name {!r}".format(arguments.env_name_column, row, env_name))
+
         populated = []
         for column, component in component_columns.items():
             cell = cells.get((row, column))
@@ -262,22 +275,6 @@ def read_baseline(arguments):
         if not populated:
             continue
 
-        env_cell = cells.get((row, env_name_column))
-        env_name = "" if env_cell is None else env_cell["value"].strip()
-        if not env_name:
-            references = ", ".join(cell["reference"] for _, _, cell in populated)
-            raise InputError(
-                "{}{} has service values at {} but no Kubernetes ENV name in {}{}".format(
-                    arguments.attribute_column,
-                    row,
-                    references,
-                    arguments.env_name_column,
-                    row,
-                )
-            )
-        if not ENV_NAME_PATTERN.match(env_name):
-            raise InputError("{}{} contains invalid Kubernetes ENV name {!r}".format(arguments.env_name_column, row, env_name))
-
         for _, component, cell in populated:
             if env_name in components[component]:
                 previous = components[component][env_name]["source_cell"]
@@ -289,14 +286,22 @@ def read_baseline(arguments):
             components[component][env_name] = expected_rule(cell["value"], cell["reference"])
 
     expected_count = sum(len(values) for values in components.values())
-    if environment_rows == 0:
+    if attribute_rows == 0:
         raise InputError("no attributes beginning with {!r} were found".format(arguments.attribute_prefix))
+    if environment_rows == 0:
+        raise InputError(
+            "no rows beginning with {!r} contain a Kubernetes ENV name in column {}".format(
+                arguments.attribute_prefix, arguments.env_name_column
+            )
+        )
     if expected_count == 0:
-        raise InputError("the Excel baseline contains no service environment values")
+        raise InputError("named Kubernetes ENV rows contain no service environment values")
     return {
         "components": components,
         "formula_cells": sorted(set(formula_cells)),
+        "attribute_rows": attribute_rows,
         "environment_rows": environment_rows,
+        "skipped_unnamed_rows": skipped_unnamed_rows,
         "expected_count": expected_count,
     }
 
@@ -556,6 +561,33 @@ def matches_expected(rule, actual, compare_values):
     return "mismatch"
 
 
+def display_text(value):
+    text = "" if value is None else str(value)
+    if len(text) > MAX_DISPLAY_LENGTH:
+        text = text[:MAX_DISPLAY_LENGTH] + "..."
+    return json.dumps(text, ensure_ascii=False)
+
+
+def display_expected(rule):
+    if rule["mode"] == "present":
+        return "<PRESENT>"
+    if rule["mode"] == "regex":
+        return "<REGEX:{}>".format(rule["value"])
+    if rule["mode"] == "source":
+        return "<{}:{}/{}>".format(rule["kind"].upper(), rule["name"], rule["key"])
+    return display_text(rule.get("value"))
+
+
+def display_actual(actual):
+    kind = actual.get("kind", "Literal")
+    if kind == "Secret" or actual.get("sensitive"):
+        return "<SECRET:{}/{}>".format(actual.get("name", "?"), actual.get("key", "?"))
+    value = display_text(actual.get("value"))
+    if kind == "ConfigMap":
+        return "{} (<CONFIGMAP:{}/{}>)".format(value, actual.get("name", "?"), actual.get("key", "?"))
+    return value
+
+
 def ignored_extra(name, patterns):
     return any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
 
@@ -617,7 +649,15 @@ def audit(arguments, baseline, mappings):
                 )
             else:
                 stats["mismatch"] += 1
-                print("[FAIL] [MISMATCH] {}/{} expected by {}".format(component, env_name, rule["source_cell"]))
+                print(
+                    "[FAIL] [MISMATCH] {}/{} expected={} actual={} source={}".format(
+                        component,
+                        env_name,
+                        display_expected(rule),
+                        display_actual(actual[env_name]),
+                        rule["source_cell"],
+                    )
+                )
 
         for env_name in sorted(set(actual) - set(expected)):
             if ignored_extra(env_name, ignore_patterns):
@@ -674,9 +714,11 @@ def main(values):
     print("  namespace={}".format(arguments.namespace))
     print("  workbook={} sheet={}".format(arguments.input, arguments.sheet))
     print(
-        "  components={} environment_rows={} expected={} formula_cells={}".format(
+        "  components={} attribute_rows={} selected_rows={} skipped_unnamed={} expected={} formula_cells={}".format(
             len(baseline["components"]),
+            baseline["attribute_rows"],
             baseline["environment_rows"],
+            baseline["skipped_unnamed_rows"],
             baseline["expected_count"],
             len(baseline["formula_cells"]),
         )
