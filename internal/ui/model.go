@@ -73,6 +73,16 @@ type workflowFinishedMsg struct {
 	err       error
 }
 
+type reportServerStartedMsg struct {
+	server *runreport.BrowserServer
+	err    error
+}
+
+type reportServerFinishedMsg struct {
+	server *runreport.BrowserServer
+	err    error
+}
+
 type model struct {
 	ctx               context.Context
 	registry          *registry.Registry
@@ -104,24 +114,31 @@ type model struct {
 	serverSource    string
 	reportFormat    runreport.Format
 	reportsDir      string
+	reportListen    string
 	runStartedAt    time.Time
 	remoteStartedAt time.Time
 	remoteOperation string
 	remoteKind      string
 	activeWorkflow  workflow.Definition
 
-	width         int
-	height        int
-	help          bool
-	running       bool
-	remoteRunning bool
-	notice        string
-	runErr        error
-	remoteErr     error
+	width           int
+	height          int
+	help            bool
+	running         bool
+	remoteRunning   bool
+	notice          string
+	runErr          error
+	remoteErr       error
+	reportServerErr error
 
-	activeOutput *safeBuffer
-	cancelRun    context.CancelFunc
-	cancelRemote context.CancelFunc
+	activeOutput         *safeBuffer
+	cancelRun            context.CancelFunc
+	cancelRemote         context.CancelFunc
+	reportServer         *runreport.BrowserServer
+	reportServerContext  context.Context
+	cancelReportServer   context.CancelFunc
+	reportServerStarting bool
+	reportServerStopping bool
 }
 
 func newModel(ctx context.Context, registry *registry.Registry, profile domain.Profile, options runner.Options) *model {
@@ -140,6 +157,10 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 	reportsDir := options.ReportsDir
 	if reportsDir == "" {
 		reportsDir = "reports"
+	}
+	reportListen := strings.TrimSpace(options.ReportListen)
+	if reportListen == "" {
+		reportListen = "127.0.0.1:8080"
 	}
 	filter := textinput.New()
 	filter.Prompt = "/ "
@@ -171,6 +192,7 @@ func newModelWithProfiles(ctx context.Context, registry *registry.Registry, work
 		profiles:          profiles,
 		reportFormat:      reportFormat,
 		reportsDir:        reportsDir,
+		reportListen:      reportListen,
 		table: table.New(
 			table.WithFocused(true),
 			table.WithStyles(styles),
@@ -346,7 +368,7 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				succeeded++
 			}
 		}
-		m.sshOutput.SetContent(strings.TrimRight(output.String(), "\n"))
+		m.sshOutput.SetContent(highlightWorkflowOutput(strings.TrimRight(output.String(), "\n")))
 		m.sshOutput.GotoBottom()
 		if msg.err != nil {
 			m.notice = "Workflow failed: " + msg.err.Error()
@@ -365,12 +387,42 @@ func (m *model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.remoteErr = runreport.JoinRunAndReportErrors(m.remoteErr, reportErr)
 		m.notice = reportNotice(m.notice, reportPath, reportErr)
 		return m, nil
+	case reportServerStartedMsg:
+		m.reportServerStarting = false
+		if msg.err != nil {
+			stopped := m.reportServerStopping || errors.Is(msg.err, context.Canceled)
+			m.resetReportServer()
+			if stopped {
+				m.notice = "Report web server stopped"
+			} else {
+				m.reportServerErr = msg.err
+				m.notice = "Report web server: " + msg.err.Error()
+			}
+			return m, nil
+		}
+		m.reportServer = msg.server
+		m.reportServerStopping = false
+		m.notice = "Report web server: " + msg.server.URL()
+		return m, runReportServerCmd(m.reportServerContext, msg.server)
+	case reportServerFinishedMsg:
+		if msg.server != m.reportServer {
+			return m, nil
+		}
+		stopped := m.reportServerStopping || errors.Is(msg.err, context.Canceled)
+		m.resetReportServer()
+		if msg.err != nil && !stopped {
+			m.reportServerErr = msg.err
+			m.notice = "Report web server stopped: " + msg.err.Error()
+		} else {
+			m.notice = "Report web server stopped"
+		}
+		return m, nil
 	case logTickMsg:
 		if m.running && m.activeOutput != nil {
 			m.logs.SetContent(m.activeOutput.String())
 			m.logs.GotoBottom()
 		} else if m.remoteRunning && m.activeWorkflow.ExecutionMode == "local" && m.activeOutput != nil {
-			m.sshOutput.SetContent(m.activeOutput.String())
+			m.sshOutput.SetContent(highlightWorkflowOutput(m.activeOutput.String()))
 			m.sshOutput.GotoBottom()
 		}
 		if m.running || (m.remoteRunning && m.activeWorkflow.ExecutionMode == "local") {
@@ -514,6 +566,8 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.startRemoteRun()
 		}
 		return m, nil
+	case "f6":
+		return m, m.toggleReportServer()
 	case "pgup", "pgdown", "ctrl+u", "ctrl+d":
 		if m.activeTab == tabFeatures {
 			var cmd tea.Cmd
@@ -547,6 +601,9 @@ func (m *model) quit() (tea.Model, tea.Cmd) {
 	}
 	if m.cancelRemote != nil {
 		m.cancelRemote()
+	}
+	if m.cancelReportServer != nil {
+		m.cancelReportServer()
 	}
 	return m, tea.Quit
 }
@@ -617,6 +674,8 @@ func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.startRemoteRun()
 		}
 		return m, nil
+	case "f6":
+		return m, m.toggleReportServer()
 	case "ctrl+c":
 		if m.remoteRunning && m.cancelRemote != nil {
 			m.cancelRemote()
@@ -1035,6 +1094,60 @@ func (m *model) toggleReportFormat() {
 	}
 	m.options.ReportFormat = string(m.reportFormat)
 	m.notice = "Report format: " + strings.ToUpper(string(m.reportFormat))
+}
+
+func (m *model) toggleReportServer() tea.Cmd {
+	if m.reportServerStarting || m.reportServer != nil {
+		if m.reportServerStopping {
+			m.notice = "Report web server is stopping..."
+			return nil
+		}
+		m.reportServerStopping = true
+		m.notice = "Stopping report web server..."
+		if m.cancelReportServer != nil {
+			m.cancelReportServer()
+		}
+		return nil
+	}
+
+	serverContext, cancel := context.WithCancel(m.ctx)
+	m.reportServerContext = serverContext
+	m.cancelReportServer = cancel
+	m.reportServerStarting = true
+	m.reportServerStopping = false
+	m.reportServerErr = nil
+	m.notice = "Starting report web server on " + m.reportListen + "..."
+	return startReportServerCmd(serverContext, m.reportsDir, m.reportListen)
+}
+
+func (m *model) resetReportServer() {
+	if m.cancelReportServer != nil {
+		m.cancelReportServer()
+	}
+	m.reportServer = nil
+	m.reportServerContext = nil
+	m.cancelReportServer = nil
+	m.reportServerStarting = false
+	m.reportServerStopping = false
+}
+
+func startReportServerCmd(ctx context.Context, directory, listen string) tea.Cmd {
+	return func() tea.Msg {
+		server, err := runreport.StartBrowser(runreport.ServerOptions{Directory: directory, Listen: listen})
+		if err != nil {
+			return reportServerStartedMsg{err: err}
+		}
+		if err := ctx.Err(); err != nil {
+			return reportServerStartedMsg{err: errors.Join(err, server.Close())}
+		}
+		return reportServerStartedMsg{server: server}
+	}
+}
+
+func runReportServerCmd(ctx context.Context, server *runreport.BrowserServer) tea.Cmd {
+	return func() tea.Msg {
+		return reportServerFinishedMsg{server: server, err: server.Run(ctx)}
+	}
 }
 
 func (m *model) startRun() tea.Cmd {

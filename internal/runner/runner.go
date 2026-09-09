@@ -27,6 +27,7 @@ type Options struct {
 	Output       io.Writer
 	ReportFormat string
 	ReportsDir   string
+	ReportListen string
 }
 
 type Runner struct {

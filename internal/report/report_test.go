@@ -17,9 +17,14 @@ func TestWriteMarkdownAndHTML(t *testing.T) {
 		Entries: []Entry{{Title: "verify-network", Target: "10.0.0.1:22", Status: "pass", Output: "\x1b[32m[PASS]\x1b[0m bond2.306"}},
 	}
 	for _, format := range []Format{Markdown, HTML} {
-		path, err := Write(document, Options{Directory: t.TempDir(), Format: format})
+		directory := t.TempDir()
+		path, err := Write(document, Options{Directory: directory, Format: format})
 		if err != nil {
 			t.Fatal(err)
+		}
+		wantDirectory := filepath.Join(directory, string(format), "01HTX")
+		if filepath.Dir(path) != wantDirectory {
+			t.Fatalf("path directory = %q, want %q", filepath.Dir(path), wantDirectory)
 		}
 		if filepath.Ext(path) != format.Extension() {
 			t.Fatalf("path = %q, want extension %q", path, format.Extension())

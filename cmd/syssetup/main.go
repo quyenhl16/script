@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -40,6 +41,9 @@ func run(ctx context.Context, args []string) error {
 		fmt.Println("syssetup", version)
 		return nil
 	}
+	if args[0] == "reports" {
+		return runReportCommand(ctx, args[1:])
+	}
 
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	featuresDir := flags.String("features-dir", envOrDefault("SYSSETUP_FEATURES_DIR", "features"), "directory containing feature packages")
@@ -50,6 +54,7 @@ func run(ctx context.Context, args []string) error {
 	logPath := flags.String("log", "syssetup.log", "execution log file")
 	reportFormatValue := flags.String("report-format", envOrDefault("SYSSETUP_REPORT_FORMAT", "md"), "report format: md or html")
 	reportsDir := flags.String("reports-dir", envOrDefault("SYSSETUP_REPORTS_DIR", "reports"), "directory for generated reports")
+	reportListen := flags.String("report-listen", envOrDefault("SYSSETUP_REPORT_LISTEN", "127.0.0.1:8080"), "TUI report web server listen address")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -94,7 +99,7 @@ func run(ctx context.Context, args []string) error {
 			profiles = includeProfile(profiles, profile)
 			return ui.New(os.Stdin, os.Stdout).Run(ctx, reg, workflows, profiles, profile, runner.Options{
 				DryRun: *dryRun, LogPath: *logPath, Output: os.Stdout,
-				ReportFormat: string(reportFormat), ReportsDir: filepath.Clean(*reportsDir),
+				ReportFormat: string(reportFormat), ReportsDir: filepath.Clean(*reportsDir), ReportListen: strings.TrimSpace(*reportListen),
 			})
 		}
 		resolved, err := reg.Resolve(profile)
@@ -129,6 +134,33 @@ func run(ctx context.Context, args []string) error {
 		usage()
 		return fmt.Errorf("unknown command %q", args[0])
 	}
+}
+
+func runReportCommand(ctx context.Context, args []string) error {
+	if len(args) == 0 || args[0] != "serve" {
+		return errors.New("usage: syssetup reports serve [--listen ADDRESS] [--reports-dir PATH]")
+	}
+	flags := flag.NewFlagSet("reports serve", flag.ContinueOnError)
+	listen := flags.String("listen", envOrDefault("SYSSETUP_REPORT_LISTEN", "127.0.0.1:8080"), "HTTP listen address")
+	reportsDir := flags.String("reports-dir", envOrDefault("SYSSETUP_REPORTS_DIR", "reports"), "report root directory")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 {
+		return fmt.Errorf("unexpected report server argument %q", flags.Arg(0))
+	}
+
+	serveContext, stop := signal.NotifyContext(ctx, os.Interrupt)
+	defer stop()
+	err := report.Serve(serveContext, report.ServerOptions{
+		Directory: filepath.Clean(*reportsDir),
+		Listen:    strings.TrimSpace(*listen),
+		Output:    os.Stdout,
+	})
+	if errors.Is(err, context.Canceled) && serveContext.Err() != nil {
+		return nil
+	}
+	return err
 }
 
 func printReportPath(path string) {
@@ -204,8 +236,9 @@ func usage() {
 Usage:
   syssetup list [--features-dir PATH]
   syssetup workflows [--features-dir PATH] [--workflows-dir PATH]
+  syssetup reports serve [--listen ADDRESS] [--reports-dir PATH]
   syssetup plan [--profile PATH]
   syssetup run  [--profile PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH]
-  syssetup tui  [--profile PATH] [--profiles-dir PATH] [--workflows-dir PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH]
+  syssetup tui  [--profile PATH] [--profiles-dir PATH] [--workflows-dir PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH] [--report-listen ADDRESS]
   syssetup version`)
 }

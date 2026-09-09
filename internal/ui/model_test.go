@@ -2,11 +2,14 @@ package ui
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
@@ -173,12 +176,68 @@ func TestCompletedFeatureRunWritesSelectedReportFormat(t *testing.T) {
 	m := newModel(context.Background(), reg, profile, runner.Options{ReportsDir: reportsDir, ReportFormat: "html"})
 	m.runStartedAt = time.Now().Add(-time.Second)
 	m.Update(runFinishedMsg{results: []domain.Result{{FeatureID: "base", Status: domain.StatusDone, Message: "configured"}}, output: "[PASS] complete"})
-	matches, err := filepath.Glob(filepath.Join(reportsDir, "01HTX", "*.html"))
+	matches, err := filepath.Glob(filepath.Join(reportsDir, "html", "01HTX", "*.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(matches) != 1 || !strings.Contains(m.notice, matches[0]) {
 		t.Fatalf("report files = %#v, notice = %q", matches, m.notice)
+	}
+}
+
+func TestTUITogglesReportWebServer(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := newModel(context.Background(), reg, domain.Profile{APIVersion: "syssetup/v1", Name: "test"}, runner.Options{
+		ReportsDir: t.TempDir(), ReportListen: "127.0.0.1:0",
+	})
+
+	_, start := m.handleKey(tea.KeyMsg{Type: tea.KeyF6})
+	if start == nil || !m.reportServerStarting {
+		t.Fatal("report web server did not enter starting state")
+	}
+	started, ok := start().(reportServerStartedMsg)
+	if !ok || started.err != nil {
+		t.Fatalf("start report web server: %#v", started.err)
+	}
+	_, wait := m.Update(started)
+	if wait == nil || m.reportServer == nil || !strings.HasPrefix(m.reportServer.URL(), "http://127.0.0.1:") {
+		t.Fatalf("report web server was not started: server=%v notice=%q", m.reportServer, m.notice)
+	}
+
+	finished := make(chan reportServerFinishedMsg, 1)
+	go func() { finished <- wait().(reportServerFinishedMsg) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		response, requestErr := http.Get(m.reportServer.URL())
+		if requestErr == nil {
+			_ = response.Body.Close()
+			if response.StatusCode != http.StatusOK {
+				t.Fatalf("report web server status = %d", response.StatusCode)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("report web server did not become ready: %v", requestErr)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	if _, command := m.handleKey(tea.KeyMsg{Type: tea.KeyF6}); command != nil || !m.reportServerStopping {
+		t.Fatal("report web server did not enter stopping state")
+	}
+	select {
+	case message := <-finished:
+		m.Update(message)
+	case <-time.After(2 * time.Second):
+		t.Fatal("report web server did not stop")
+	}
+	if m.reportServer != nil || m.reportServerStarting || m.reportServerStopping || m.reportServerErr != nil {
+		t.Fatalf("report web server state was not reset: server=%v error=%v", m.reportServer, m.reportServerErr)
 	}
 }
 

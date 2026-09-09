@@ -93,7 +93,7 @@ func Write(document Document, options Options) (string, error) {
 	if system == "" {
 		system = "interactive"
 	}
-	directory := filepath.Join(options.Directory, system)
+	directory := filepath.Join(options.Directory, string(format), system)
 	if err := os.MkdirAll(directory, 0o750); err != nil {
 		return "", fmt.Errorf("create report directory: %w", err)
 	}
@@ -181,7 +181,10 @@ var htmlReport = template.Must(template.New("report").Funcs(template.FuncMap{
 	"dash":     valueOrDash,
 }).Parse(`<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{{.Title}}</title><style>
+<title>{{.Title}}</title>
+<meta name="syssetup-title" content="{{.Title}}"><meta name="syssetup-status" content="{{.Status}}">
+<meta name="syssetup-system" content="{{.System}}"><meta name="syssetup-profile" content="{{.Profile}}">
+<meta name="syssetup-kind" content="{{.Kind}}"><meta name="syssetup-finished" content="{{time .FinishedAt}}"><style>
 :root{color-scheme:light dark;--bg:#f5f7fb;--card:#fff;--text:#172033;--muted:#657086;--line:#dce2ec;--pass:#137333;--fail:#b3261e;--warn:#9a6700}
 @media(prefers-color-scheme:dark){:root{--bg:#10141d;--card:#191f2b;--text:#eef2fa;--muted:#aab4c8;--line:#30394a;--pass:#6dd58c;--fail:#ff897d;--warn:#f6c453}}
 *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:15px/1.55 system-ui,sans-serif}.page{max-width:1080px;margin:auto;padding:32px 20px}h1{margin:0 0 8px}.meta,.summary,.entry{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px;margin:16px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px}.label{color:var(--muted);font-size:12px;text-transform:uppercase}.value{font-weight:650}.pass,.done,.planned{color:var(--pass)}.fail,.failed,.cancelled{color:var(--fail)}.partial,.skipped{color:var(--warn)}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:var(--bg);border-radius:8px;padding:14px}details summary{cursor:pointer;font-weight:650}.badge{font-weight:750;text-transform:uppercase}

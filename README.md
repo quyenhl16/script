@@ -231,6 +231,7 @@ Phím tắt:
 | `F3` | Nạp toàn bộ server và credential từ `base-server` của hệ thống hiện tại |
 | `F4` | Chuyển nhanh định dạng report giữa Markdown và HTML |
 | `F5` | Chạy SSH trên tất cả server đã nhập hoặc đã nạp |
+| `F6` | Bật hoặc tắt web server xem HTML report |
 | `?` | Hiện trợ giúp |
 | `q` | Thoát |
 
@@ -549,12 +550,22 @@ lập. Markdown là định dạng mặc định và có thể đọc trực ti�
 `less` hoặc `vim`:
 
 ```bash
-less reports/01HTX/20260904_153025.000_prepare-setup-deploy.md
+less reports/md/01HTX/20260904_153025.000_prepare-setup-deploy.md
 ```
 
-Report được nhóm theo hệ thống tại `reports/<system>/`, gồm trạng thái tổng, thời
-gian chạy, thống kê thành công/thất bại và output chi tiết theo feature/server/step.
-Mã màu terminal được loại bỏ và credential SSH không được đưa vào report.
+Report được tách theo định dạng rồi nhóm theo hệ thống:
+
+```text
+reports/
+├── md/
+│   └── <system>/*.md
+└── html/
+    └── <system>/*.html
+```
+
+Mỗi file gồm trạng thái tổng, thời gian chạy, thống kê thành công/thất bại và
+output chi tiết theo feature/server/step. Mã màu terminal được loại bỏ và
+credential SSH không được đưa vào report.
 
 Chọn định dạng khi chạy CLI:
 
@@ -567,41 +578,323 @@ Dùng `--reports-dir PATH` để đổi thư mục lưu. Trong TUI, định dạ
 ở góc phải header; nhấn `F4` để chuyển đơn giản giữa `MD` và `HTML`. Sau khi lệnh
 kết thúc, đường dẫn report được hiển thị trên thanh trạng thái.
 
-## Thêm feature
+### Web browser cho HTML report
 
-Tạo cấu trúc:
+Chạy web server tích hợp để xem danh sách toàn bộ report HTML:
 
-```text
-features/nginx/
-├── feature.json
-├── run.sh
-└── templates/
+```bash
+./bin/syssetup reports serve
 ```
 
-Manifest tối thiểu:
+Mặc định server chỉ lắng nghe tại `127.0.0.1:8080` và đọc report từ
+`reports/html/`. Trang chỉ mục hiển thị tổng số report, trạng thái, system,
+profile, loại report, thời gian, kích thước; hỗ trợ tìm kiếm và lọc theo trạng thái.
+
+Khi syssetup chạy trên server không có giao diện đồ họa, tạo SSH tunnel từ máy cá nhân:
+
+```bash
+ssh -L 8080:127.0.0.1:8080 user@IP_SERVER
+```
+
+Sau đó mở `http://127.0.0.1:8080/` trên trình duyệt của máy cá nhân. Nhấn `Ctrl+C`
+để dừng web server. Có thể thay đổi địa chỉ và thư mục report:
+
+```bash
+./bin/syssetup reports serve --listen 127.0.0.1:9090 --reports-dir /var/lib/syssetup/reports
+```
+
+Biến môi trường tương ứng là `SYSSETUP_REPORT_LISTEN` và `SYSSETUP_REPORTS_DIR`.
+Chỉ dùng `--listen 0.0.0.0:8080` trong mạng được kiểm soát vì web server không có
+xác thực và report có thể chứa thông tin vận hành nội bộ.
+
+Trong TUI, nhấn `F6` để bật hoặc tắt web server mà không làm gián đoạn feature hay
+workflow đang chạy. Header hiển thị `Web: STARTING`, `Web: ON`, `Web: STOPPING`
+hoặc `Web: OFF`; khi khởi động thành công, URL được hiển thị trên thanh trạng thái.
+TUI dùng chung `--reports-dir` và có thể đổi địa chỉ listen khi khởi động:
+
+```bash
+./bin/syssetup tui --report-listen 127.0.0.1:9090
+```
+
+## Tích hợp feature và workflow mới
+
+Registry tự khám phá các thư mục con trong `features/`, vì vậy một feature thông thường
+không cần đăng ký trong code Go hoặc sửa TUI. Trước khi tích hợp, chọn cách chạy phù hợp:
+
+| Nhu cầu | Cấu hình feature |
+|---|---|
+| Chạy từ tab `Features` hoặc CLI với profile | Không đặt `remoteOnly`, profile chọn feature |
+| Chạy trong local workflow | `workflowCompatible: true`, không đặt `remoteOnly` |
+| Chạy trong remote workflow | `remoteOnly: true` hoặc `workflowCompatible: true` |
+| Chạy script SSH một lần, không cần quản lý như feature | Dùng chế độ `Script` trong tab `Remote SSH`; không cần tạo feature |
+
+### 1. Tạo feature package
+
+Mỗi feature có một thư mục riêng. Nếu logic chính viết bằng Python, vẫn dùng `run.sh`
+làm entrypoint vì runner hiện tại gọi entrypoint bằng Bash:
+
+```text
+features/my-check/
+├── feature.json       # bắt buộc: metadata, timeout và parameter
+├── run.sh             # bắt buộc: adapter theo Feature API
+├── check.py           # tùy chọn: logic Python
+└── templates/         # tùy chọn: asset riêng của feature
+```
+
+Manifest mẫu:
 
 ```json
 {
   "apiVersion": "syssetup/v1",
-  "id": "nginx",
-  "name": "Nginx",
+  "id": "my-check",
+  "name": "My system check",
   "version": "1.0.0",
+  "description": "Kiểm tra trạng thái của hệ thống",
   "entrypoint": "run.sh",
-  "supportedOS": ["rhel", "centos", "rocky", "almalinux"],
-  "requireRoot": true,
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "workflowCompatible": true,
   "timeoutSeconds": 300,
-  "dependsOn": ["check-os"]
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace",
+      "required": true
+    },
+    "show_pass": {
+      "type": "boolean",
+      "description": "Hiển thị các kết quả thành công",
+      "default": true
+    }
+  }
 }
 ```
 
-Entrypoint phải hỗ trợ bốn action:
+`id` phải duy nhất. `entrypoint` phải nằm trong thư mục feature; `timeoutSeconds` phải
+lớn hơn `0`. Parameter chỉ hỗ trợ `string`, `integer` và `boolean`. Với cách chạy qua
+profile, tool chuẩn hóa parameter thành biến môi trường:
 
-- `check`: trả `0` nếu trạng thái đã đúng, `10` nếu cần chạy `apply`.
-- `apply`: thực hiện thay đổi.
-- `verify`: xác nhận trạng thái sau thay đổi.
-- `rollback`: hoàn tác nếu feature hỗ trợ.
+```text
+namespace  -> SYSSETUP_PARAM_NAMESPACE
+show_pass  -> SYSSETUP_PARAM_SHOW_PASS
+```
 
-Sau đó thêm `{"id":"nginx"}` vào một file trong `profiles/<system>/`. Không cần đăng ký feature trong Go.
+### 2. Viết entrypoint theo Feature API
+
+Entrypoint phải nhận action ở argument đầu tiên:
+
+- `check`: trả `0` nếu trạng thái đã đúng, `10` nếu cần chạy `apply`; mã khác báo lỗi.
+- `apply`: thực hiện thay đổi và phải có khả năng chạy lại an toàn.
+- `verify`: xác nhận trạng thái sau thay đổi; trả mã khác `0` nếu kiểm tra thất bại.
+- `rollback`: hoàn tác nếu feature hỗ trợ. Runner chưa tự động gọi action này.
+
+Adapter mẫu cho một feature chỉ kiểm tra, không thay đổi hệ thống:
+
+```bash
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+action="${1:-}"
+namespace="${SYSSETUP_PARAM_NAMESPACE:-default}"
+show_pass="${SYSSETUP_PARAM_SHOW_PASS:-true}"
+
+# Workflow truyền parameter dưới dạng key=value sau action; profile truyền qua env.
+for argument in "${@:2}"; do
+  case "$argument" in
+    namespace=*) namespace="${argument#*=}" ;;
+    show_pass=*) show_pass="${argument#*=}" ;;
+    *) printf 'Unknown argument: %q\n' "$argument" >&2; exit 2 ;;
+  esac
+done
+
+case "$action" in
+  check)
+    command -v python3 >/dev/null 2>&1 || {
+      printf '[FAIL] python3 command was not found\n' >&2
+      exit 1
+    }
+    # Audit phải chạy ở mọi lần thực thi.
+    exit 10
+    ;;
+  apply)
+    # Feature read-only nên không thay đổi trạng thái.
+    :
+    ;;
+  verify)
+    python3 "$(dirname "$0")/check.py" \
+      --namespace "$namespace" \
+      --show-pass "$show_pass"
+    ;;
+  rollback)
+    :
+    ;;
+  *)
+    printf 'Usage: %s {check|apply|verify|rollback} [key=value ...]\n' "$0" >&2
+    exit 2
+    ;;
+esac
+```
+
+Với feature có thay đổi hệ thống, `check` chỉ trả `10` khi trạng thái chưa đạt,
+`apply` thực hiện thay đổi và `verify` kiểm tra lại. Không dùng `eval`; luôn quote biến
+đầu vào. Nên in kết quả bằng các marker `[PASS]`, `[FAIL]`, `[WARN]`, `[SKIP]` và
+`[INFO]` để log trên TUI được highlight thống nhất.
+
+### 3. Thêm profile nếu chạy từ Features hoặc CLI
+
+Tạo hoặc sửa `profiles/<system>/<profile>.json`:
+
+```json
+{
+  "apiVersion": "syssetup/v1",
+  "name": "my-check-profile",
+  "description": "Run custom system check",
+  "features": [
+    {
+      "id": "my-check",
+      "parameters": {
+        "namespace": "pramf01",
+        "show_pass": true
+      }
+    }
+  ]
+}
+```
+
+Profile không bắt buộc nếu feature chỉ được gọi từ workflow. Feature có đầy đủ default
+cũng có thể được chọn thủ công trên TUI mà không cần profile riêng.
+
+### 4. Thêm feature vào workflow
+
+Workflow cần hai lớp file độc lập:
+
+- `workflows/<workflow-id>/workflow.json`: định nghĩa thứ tự, dependency và chính sách lỗi.
+- `workflow-configs/<config>.json`: cung cấp invocation, argument và artifact thực tế.
+
+Thêm step vào workflow manifest:
+
+```json
+{
+  "id": "my-check-step",
+  "feature": "my-check",
+  "needs": ["dependency-check"]
+}
+```
+
+Workflow local không cần server hoặc credential SSH:
+
+```json
+{
+  "apiVersion": "syssetup/workflow/v1",
+  "id": "my-validation",
+  "name": "My validation",
+  "version": "1.0.0",
+  "executionMode": "local",
+  "failurePolicy": "continue",
+  "steps": [
+    {
+      "id": "dependency-check",
+      "feature": "check-os"
+    },
+    {
+      "id": "my-check-step",
+      "feature": "my-check",
+      "needs": ["dependency-check"]
+    }
+  ]
+}
+```
+
+`failurePolicy: "continue"` vẫn chạy các invocation và step sau khi một bước thất bại;
+`stop-server` dừng chuỗi step trên server bị lỗi. Trong config, workflow truyền nguyên
+vẹn `args` vào script và không tự chạy chu trình `check -> apply -> verify`, vì vậy cần
+ghi action mong muốn, thường là `verify`:
+
+```json
+{
+  "apiVersion": "syssetup/workflow-config/v1",
+  "workflow": "my-validation",
+  "steps": {
+    "dependency-check": [
+      {
+        "args": ["verify"]
+      }
+    ],
+    "my-check-step": [
+      {
+        "args": [
+          "verify",
+          "namespace=pramf01",
+          "show_pass=true"
+        ]
+      }
+    ]
+  }
+}
+```
+
+### 5. Truyền Excel, JSON hoặc script phụ bằng artifact
+
+Không hard-code đường dẫn dữ liệu vào feature. Khai báo file trong invocation:
+
+```json
+{
+  "args": ["verify", "namespace=pramf01"],
+  "artifacts": [
+    {
+      "id": "input-file",
+      "source": "artifacts/input.xlsx"
+    },
+    {
+      "id": "checker",
+      "source": "../features/my-check/check.py"
+    }
+  ]
+}
+```
+
+Entrypoint đọc đường dẫn đã được tool cung cấp:
+
+```bash
+input_file="${SYSSETUP_ARTIFACT_INPUT_FILE:?missing input file}"
+checker="${SYSSETUP_ARTIFACT_CHECKER:?missing checker}"
+python3 "$checker" --input "$input_file"
+```
+
+Với local workflow, biến trỏ tới file local tuyệt đối. Với remote workflow, tool chuyển
+nội dung qua SSH vào thư mục tạm có quyền hạn chế và tự xóa sau khi chạy.
+
+### 6. Checklist trước khi phát hành
+
+```bash
+bash -n features/my-check/run.sh
+go test ./...
+go build -o bin/syssetup ./cmd/syssetup
+./bin/syssetup list
+./bin/syssetup workflows
+./bin/syssetup plan --profile profiles/<system>/<profile>.json
+```
+
+Kiểm tra thêm cả nhánh thành công và thất bại, timeout, parameter sai, dependency thiếu,
+quyền root và khả năng chạy lại. Khi thay đổi hành vi feature/workflow, tăng `version`
+trong manifest tương ứng. `make package` tự đưa toàn bộ `features/`, `profiles/`,
+`workflows/`, `workflow-configs/` và `checks/` vào gói phát hành.
+
+Tóm tắt các file cần tạo hoặc sửa:
+
+| Mục đích | File |
+|---|---|
+| Khai báo feature | `features/<id>/feature.json` |
+| Adapter thực thi | `features/<id>/run.sh` |
+| Logic/asset riêng | `features/<id>/*.py`, JSON, template... |
+| Chọn feature và cấu hình parameter | `profiles/<system>/<profile>.json` |
+| Định nghĩa thứ tự workflow | `workflows/<id>/workflow.json` |
+| Truyền argument và artifact | `workflow-configs/<config>.json` |
+| Kiểm thử và tài liệu chuyên biệt | `tests/*`, `checks/*`, `README.md` |
+
+Chỉ cần sửa `internal/registry`, `internal/runner`, `internal/workflow`, `internal/ui` hoặc
+`cmd/syssetup` khi feature cần một khả năng mới mà Feature API/Workflow API hiện tại chưa hỗ trợ.
 
 ## Phân phối
 

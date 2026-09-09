@@ -48,8 +48,8 @@ func (m *model) headerView() string {
 		modeStyle = noticeStyle
 	}
 	left := brandStyle.Render("SYSSETUP") + "  " + contextStyle.Render("RHEL FEATURE DASHBOARD")
-	right := fmt.Sprintf("Profile: %s  Selected: %d  Mode: %s  Report: %s",
-		profileLabel(m.profile), m.selectedCount(), modeStyle.Render(mode), strings.ToUpper(string(m.reportFormat)))
+	right := fmt.Sprintf("Profile: %s  Selected: %d  Mode: %s  Report: %s  Web: %s",
+		profileLabel(m.profile), m.selectedCount(), modeStyle.Render(mode), strings.ToUpper(string(m.reportFormat)), m.reportServerLabel())
 	space := max(m.width-lipgloss.Width(left)-lipgloss.Width(right), 1)
 	return left + strings.Repeat(" ", space) + right
 }
@@ -127,9 +127,9 @@ func (m *model) sshView(height int) string {
 			visibleFields = 8
 		}
 		visibleFields = min(visibleFields, len(formLines))
-		shortcut := "F2 mode · F3 servers · F4 report · F5 run."
+		shortcut := "F2 mode · F3 servers · F4 report · F5 run · F6 web."
 		if m.sshMode == sshWorkflow && m.activeWorkflow.ExecutionMode == "local" {
-			shortcut = "F2 mode · F4 report · F5 run."
+			shortcut = "F2 mode · F4 report · F5 run · F6 web."
 		}
 		formLines = append(formLines[:visibleFields], "", mutedStyle.Render(shortcut))
 	}
@@ -405,7 +405,7 @@ func (m *model) logsView(height int) string {
 
 func (m *model) statusView() string {
 	message := m.notice
-	if m.runErr != nil || m.remoteErr != nil {
+	if m.runErr != nil || m.remoteErr != nil || m.reportServerErr != nil {
 		return errorStyle.MaxWidth(m.width).Render("! " + message)
 	}
 	if m.running || m.remoteRunning {
@@ -417,7 +417,7 @@ func (m *model) statusView() string {
 func (m *model) footerView() string {
 	if m.activeTab == tabSSH {
 		if m.remoteRunning {
-			return keyStyle.Render("ctrl+c") + " cancel  " + keyStyle.Render("esc") + " navigation"
+			return keyStyle.Render("ctrl+c") + " cancel  " + keyStyle.Render("F6") + " web reports  " + keyStyle.Render("esc") + " navigation"
 		}
 		return strings.Join([]string{
 			keyStyle.Render("tab/↑↓") + " field",
@@ -425,14 +425,15 @@ func (m *model) footerView() string {
 			keyStyle.Render("F3") + " load base-server",
 			keyStyle.Render("F4") + " report " + strings.ToUpper(string(m.reportFormat)),
 			keyStyle.Render("F5") + " run",
+			keyStyle.Render("F6") + " web reports",
 			keyStyle.Render("esc") + " navigation",
 		}, "  ")
 	}
 	if m.activeTab == tabWorkflows {
-		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load workflow  " + keyStyle.Render("F4") + " report format  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
+		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load workflow  " + keyStyle.Render("F4") + " report format  " + keyStyle.Render("F6") + " web reports  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
 	}
 	if m.activeTab == tabProfiles {
-		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load profile  " + keyStyle.Render("F4") + " report format  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
+		return keyStyle.Render("j/k") + " move  " + keyStyle.Render("enter") + " load profile  " + keyStyle.Render("F4") + " report format  " + keyStyle.Render("F6") + " web reports  " + keyStyle.Render("tab") + " view  " + keyStyle.Render("q") + " quit"
 	}
 	items := []string{
 		keyStyle.Render("j/k") + " move",
@@ -441,6 +442,7 @@ func (m *model) footerView() string {
 		keyStyle.Render("/") + " filter",
 		keyStyle.Render("r") + " run",
 		keyStyle.Render("F4") + " report " + strings.ToUpper(string(m.reportFormat)),
+		keyStyle.Render("F6") + " web reports",
 		keyStyle.Render("tab") + " view",
 		keyStyle.Render("?") + " help",
 		keyStyle.Render("q") + " quit",
@@ -469,11 +471,25 @@ func (m *model) helpView() string {
 		keyStyle.Render("c") + "               Cancel the running plan",
 		keyStyle.Render("F2 / F3 / F5") + "    SSH mode / load base-server / run",
 		keyStyle.Render("F4") + "              Toggle Markdown / HTML report",
+		keyStyle.Render("F6") + "              Start / stop HTML report web server",
 		keyStyle.Render("? / esc") + "         Close this help",
 		keyStyle.Render("q / ctrl+c") + "      Quit",
 	}, "\n")
 	box := panelStyle.Padding(1, 2).Width(min(max(m.width-12, 40), 72)).Render(content)
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, box)
+}
+
+func (m *model) reportServerLabel() string {
+	switch {
+	case m.reportServerStopping:
+		return noticeStyle.Render("STOPPING")
+	case m.reportServerStarting:
+		return noticeStyle.Render("STARTING")
+	case m.reportServer != nil:
+		return lipgloss.NewStyle().Foreground(colorGreen).Bold(true).Render("ON")
+	default:
+		return mutedStyle.Render("OFF")
+	}
 }
 
 func (m *model) currentFeature() (domain.Feature, bool) {
