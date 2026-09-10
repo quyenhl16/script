@@ -424,7 +424,7 @@ check_service() {
   declare -A seen_probe_addresses=()
 
   if ! service_data="$(kubectl get service "$service" -n "$namespace" -o \
-    'jsonpath={.spec.clusterIP}{"\n"}{range .spec.externalIPs[*]}{.}{"|"}{end}{range .status.loadBalancer.ingress[*]}{.ip}{.hostname}{"|"}{end}{"\n"}{range .spec.ports[*]}{.protocol}{"|"}{.port}{"\n"}{end}' 2>/dev/null)"; then
+    'jsonpath={.spec.clusterIP}{"\n"}{range .spec.externalIPs[*]}{@}{"|"}{end}{range .status.loadBalancer.ingress[*]}{.ip}{.hostname}{"|"}{end}{"\n"}{range .spec.ports[*]}{.protocol}{"|"}{.port}{"\n"}{end}' 2>/dev/null)"; then
     fail "Service [$service] is missing from namespace [$namespace]"
     return
   fi
