@@ -14,6 +14,8 @@ ip_udm="${SYSSETUP_PARAM_IP_UDM:-68.240.36.153}"
 ip_smf="${SYSSETUP_PARAM_IP_SMF:-68.240.36.105}"
 ip_amf_remote="${SYSSETUP_PARAM_IP_AMF_REMOTE:-68.240.36.9}"
 ip_nrf="${SYSSETUP_PARAM_IP_NRF:-68.240.36.193}"
+ip_eir="${SYSSETUP_PARAM_IP_EIR:-68.240.136.1}"
+ip_nssf="${SYSSETUP_PARAM_IP_NSSF:-68.240.136.2}"
 ip_gnodeb="${SYSSETUP_PARAM_IP_GNODEB:-69.69.0.150}"
 
 curl_ausf_urls="${SYSSETUP_PARAM_CURL_AUSF_URLS:-http://68.240.36.153/}"
@@ -21,6 +23,8 @@ curl_udm_urls="${SYSSETUP_PARAM_CURL_UDM_URLS:-http://68.240.36.153/}"
 curl_smf_urls="${SYSSETUP_PARAM_CURL_SMF_URLS:-http://68.240.36.105/}"
 curl_amf_remote_urls="${SYSSETUP_PARAM_CURL_AMF_REMOTE_URLS:-http://68.240.36.9/}"
 curl_nrf_urls="${SYSSETUP_PARAM_CURL_NRF_URLS:-http://68.240.36.193/}"
+curl_eir_urls="${SYSSETUP_PARAM_CURL_EIR_URLS:-http://68.240.136.1/}"
+curl_nssf_urls="${SYSSETUP_PARAM_CURL_NSSF_URLS:-http://68.240.136.2/}"
 curl_connect_timeout="${SYSSETUP_PARAM_CURL_CONNECT_TIMEOUT_SECONDS:-3}"
 curl_max_time="${SYSSETUP_PARAM_CURL_MAX_TIME_SECONDS:-10}"
 curl_insecure="${SYSSETUP_PARAM_CURL_INSECURE:-false}"
@@ -39,12 +43,16 @@ parse_workflow_arguments() {
       ip_smf=*) ip_smf="${argument#*=}" ;;
       ip_amf_remote=*) ip_amf_remote="${argument#*=}" ;;
       ip_nrf=*) ip_nrf="${argument#*=}" ;;
+      ip_eir=*) ip_eir="${argument#*=}" ;;
+      ip_nssf=*) ip_nssf="${argument#*=}" ;;
       ip_gnodeb=*) ip_gnodeb="${argument#*=}" ;;
       curl_ausf_urls=*) curl_ausf_urls="${argument#*=}" ;;
       curl_udm_urls=*) curl_udm_urls="${argument#*=}" ;;
       curl_smf_urls=*) curl_smf_urls="${argument#*=}" ;;
       curl_amf_remote_urls=*) curl_amf_remote_urls="${argument#*=}" ;;
       curl_nrf_urls=*) curl_nrf_urls="${argument#*=}" ;;
+      curl_eir_urls=*) curl_eir_urls="${argument#*=}" ;;
+      curl_nssf_urls=*) curl_nssf_urls="${argument#*=}" ;;
       curl_connect_timeout_seconds=*) curl_connect_timeout="${argument#*=}" ;;
       curl_max_time_seconds=*) curl_max_time="${argument#*=}" ;;
       curl_insecure=*) curl_insecure="${argument#*=}" ;;
@@ -173,6 +181,8 @@ validate_configuration() {
     "ip_smf=$ip_smf"
     "ip_amf_remote=$ip_amf_remote"
     "ip_nrf=$ip_nrf"
+    "ip_eir=$ip_eir"
+    "ip_nssf=$ip_nssf"
     "ip_gnodeb=$ip_gnodeb"
   )
   local -a url_list_settings=(
@@ -181,6 +191,8 @@ validate_configuration() {
     "curl_smf_urls=$curl_smf_urls"
     "curl_amf_remote_urls=$curl_amf_remote_urls"
     "curl_nrf_urls=$curl_nrf_urls"
+    "curl_eir_urls=$curl_eir_urls"
+    "curl_nssf_urls=$curl_nssf_urls"
   )
 
   case "$phase" in
@@ -329,7 +341,7 @@ phase_check_connectivity() {
   local -a gnodeb_targets
   local -a ipgw_pods
   local -a mm_pods
-  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF)
+  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF EIR NSSF)
   local -a target_ips
   declare -A nf_targets=(
     [AUSF]="$ip_ausf"
@@ -337,6 +349,8 @@ phase_check_connectivity() {
     [SMF]="$ip_smf"
     [AMF_REMOTE]="$ip_amf_remote"
     [NRF]="$ip_nrf"
+    [EIR]="$ip_eir"
+    [NSSF]="$ip_nssf"
   )
 
   heading '[PHASE 3] VERIFYING NETWORK CONNECTIVITY (PING TESTS)'
@@ -453,13 +467,15 @@ phase_check_http() {
   local url
   local -a mm_pods
   local -a target_urls
-  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF)
+  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF EIR NSSF)
   declare -A nf_urls=(
     [AUSF]="$curl_ausf_urls"
     [UDM]="$curl_udm_urls"
     [SMF]="$curl_smf_urls"
     [AMF_REMOTE]="$curl_amf_remote_urls"
     [NRF]="$curl_nrf_urls"
+    [EIR]="$curl_eir_urls"
+    [NSSF]="$curl_nssf_urls"
   )
 
   heading '[PHASE 4] VERIFYING PEER NF HTTP CONNECTIVITY (CURL)'

@@ -44,21 +44,24 @@ phạm vi kiểm tra. Namespace, VIP và địa chỉ NF đích đều có thể
 `parameters` của feature `k8s-connectivity-check`.
 
 Trong phase `ping`, các tham số `ip_ausf`, `ip_udm`, `ip_smf`,
-`ip_amf_remote`, `ip_nrf` và `ip_gnodeb` chấp nhận một hoặc nhiều IPv4, phân
-cách bằng dấu phẩy hoặc khoảng trắng. Mỗi MM pod sẽ ping từng địa chỉ NF; mỗi
-IPGW pod sẽ ping từng địa chỉ gNodeB. Cấu hình một IP cũ vẫn được hỗ trợ:
+`ip_amf_remote`, `ip_nrf`, `ip_eir`, `ip_nssf` và `ip_gnodeb` chấp nhận một hoặc
+nhiều IPv4, phân cách bằng dấu phẩy hoặc khoảng trắng. Mỗi MM pod sẽ ping từng
+địa chỉ NF; mỗi IPGW pod sẽ ping từng địa chỉ gNodeB. Cấu hình một IP cũ vẫn được
+hỗ trợ:
 
 ```json
 {
   "ip_ausf": "192.0.2.10, 192.0.2.11",
   "ip_udm": "192.0.2.20 192.0.2.21",
+  "ip_eir": "192.0.2.41",
+  "ip_nssf": "192.0.2.42",
   "ip_gnodeb": "198.51.100.10, 198.51.100.11"
 }
 ```
 
-Phase `curl` chạy từ từng MM pod đến các URL của AUSF, UDM, SMF, AMF remote và
-NRF. Mỗi tham số `curl_*_urls` nhận một hoặc nhiều URL HTTP(S), cho phép khai báo
-port và path riêng cho từng NF:
+Phase `curl` chạy từ từng MM pod đến các URL của AUSF, UDM, SMF, AMF remote,
+NRF, EIR và NSSF. Mỗi tham số `curl_*_urls` nhận một hoặc nhiều URL HTTP(S), cho
+phép khai báo port và path riêng cho từng NF:
 
 ```json
 {
@@ -68,6 +71,8 @@ port và path riêng cho từng NF:
   "curl_smf_urls": "http://192.0.2.30:8080/",
   "curl_amf_remote_urls": "http://192.0.2.35:8080/health",
   "curl_nrf_urls": "http://192.0.2.40:8080/nnrf-nfm/v1/nf-instances",
+  "curl_eir_urls": "http://192.0.2.41/",
+  "curl_nssf_urls": "http://192.0.2.42/",
   "curl_connect_timeout_seconds": 3,
   "curl_max_time_seconds": 10,
   "curl_insecure": false
@@ -78,6 +83,19 @@ Bất kỳ HTTP status từ `100` đến `599` đều được coi là kết n�
 phase này kiểm tra DNS/TCP/TLS/HTTP, không kiểm tra nghiệp vụ của API. Lỗi timeout,
 connection refused, DNS hoặc TLS sẽ báo FAIL. Với chứng thư nội bộ chưa được tin
 cậy, có thể đặt `curl_insecure` thành `true`.
+
+Query NRF discovery trực tiếp từ host, kiểm tra AMF/SMF instance và in response
+JSON dạng dễ đọc:
+
+```bash
+./bin/syssetup plan --profile profiles/01HTX/nrf-query-check.json
+./bin/syssetup run --profile profiles/01HTX/nrf-query-check.json
+```
+
+Feature `nrf-query-check` yêu cầu NRF trả HTTP `2xx`, body là JSON có mảng
+`nfInstances` và ít nhất một instance đúng `nfType`. Mặc định instance phải có
+`nfStatus=REGISTERED`; đặt `require_registered=false` nếu chỉ cần kiểm tra kết quả
+discovery. Hai URL đầy đủ được cấu hình bằng `amf_query_url` và `smf_query_url`.
 
 Kiểm tra danh sách service bắt buộc của namespace `pramf01`, ready endpoint,
 External IP kỳ vọng và kết nối đến mọi cổng TCP qua ClusterIP (hoặc endpoint IP

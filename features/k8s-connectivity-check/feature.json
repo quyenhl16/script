@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Audit pod VIPs, OSPF adjacencies, ping paths and HTTP connectivity to peer NFs",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
@@ -61,6 +61,16 @@
       "description": "Remote NRF IPv4 list, separated by commas or spaces",
       "default": "68.240.36.193"
     },
+    "ip_eir": {
+      "type": "string",
+      "description": "Remote EIR IPv4 list, separated by commas or spaces",
+      "default": "68.240.136.1"
+    },
+    "ip_nssf": {
+      "type": "string",
+      "description": "Remote NSSF IPv4 list, separated by commas or spaces",
+      "default": "68.240.136.2"
+    },
     "ip_gnodeb": {
       "type": "string",
       "description": "gNodeB IPv4 list, separated by commas or spaces",
@@ -90,6 +100,16 @@
       "type": "string",
       "description": "NRF HTTP(S) URL list, separated by commas or spaces",
       "default": "http://68.240.36.193/"
+    },
+    "curl_eir_urls": {
+      "type": "string",
+      "description": "EIR HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.136.1/"
+    },
+    "curl_nssf_urls": {
+      "type": "string",
+      "description": "NSSF HTTP(S) URL list, separated by commas or spaces",
+      "default": "http://68.240.136.2/"
     },
     "curl_connect_timeout_seconds": {
       "type": "integer",

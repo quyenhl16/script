@@ -1,0 +1,45 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "nrf-query-check",
+  "name": "NRF discovery query check",
+  "version": "1.0.0",
+  "description": "Query NRF discovery for AMF and SMF instances and print readable JSON responses",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "workflowCompatible": true,
+  "timeoutSeconds": 120,
+  "dependsOn": ["check-os"],
+  "parameters": {
+    "amf_query_url": {
+      "type": "string",
+      "description": "NRF discovery URL used to find AMF instances",
+      "default": "http://68.240.39.17:20000/nnrf-disc/v1/nf-instances?guami=%7B%22plmnId%22%3A%7B%22mcc%22%3A%22452%22%2C%22mnc%22%3A%2210%22%7D%2C%22amfId%22%3A%22010081%22%7D&requester-nf-type=SMF&service-names=namf-comm&target-nf-type=AMF"
+    },
+    "smf_query_url": {
+      "type": "string",
+      "description": "NRF discovery URL used to find SMF instances",
+      "default": "http://68.240.39.17:20000/nnrf-disc/v1/nf-instances?requester-nf-type=AMF&service-names=nsmf-pdusession&snssais=%5B%7B%22sst%22%3A1%7D%5D&target-nf-type=SMF&target-plmn-list=%5B%7B%22mcc%22%3A%22452%22%2C%22mnc%22%3A%2210%22%7D%5D&requester-nf-instance-id=87986745-44b8-4837-b7c3-955759cb098b&requester-plmn-list=%5B%7B%22mcc%22%3A%22452%22%2C%22mnc%22%3A%2204%22%7D%5D&dnn=mddqs"
+    },
+    "connect_timeout_seconds": {
+      "type": "integer",
+      "description": "Maximum time to establish each NRF connection",
+      "default": 3
+    },
+    "max_time_seconds": {
+      "type": "integer",
+      "description": "Maximum total time for each NRF request",
+      "default": 15
+    },
+    "curl_insecure": {
+      "type": "boolean",
+      "description": "Disable TLS certificate verification for HTTPS NRF URLs",
+      "default": false
+    },
+    "require_registered": {
+      "type": "boolean",
+      "description": "Require at least one matching NF instance with REGISTERED status",
+      "default": true
+    }
+  }
+}

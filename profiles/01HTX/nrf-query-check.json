@@ -1,0 +1,27 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "nrf-query-check",
+  "description": "Query NRF discovery for AMF and SMF instances",
+  "features": [
+    {
+      "id": "check-os",
+      "parameters": {
+        "required_commands": "bash python3 curl",
+        "minimum_bash_major": 4,
+        "minimum_python_minor": 6,
+        "require_tcp_client": false
+      }
+    },
+    {
+      "id": "nrf-query-check",
+      "parameters": {
+        "amf_query_url": "http://68.240.39.17:20000/nnrf-disc/v1/nf-instances?guami=%7B%22plmnId%22%3A%7B%22mcc%22%3A%22452%22%2C%22mnc%22%3A%2210%22%7D%2C%22amfId%22%3A%22010081%22%7D&requester-nf-type=SMF&service-names=namf-comm&target-nf-type=AMF",
+        "smf_query_url": "http://68.240.39.17:20000/nnrf-disc/v1/nf-instances?requester-nf-type=AMF&service-names=nsmf-pdusession&snssais=%5B%7B%22sst%22%3A1%7D%5D&target-nf-type=SMF&target-plmn-list=%5B%7B%22mcc%22%3A%22452%22%2C%22mnc%22%3A%2210%22%7D%5D&requester-nf-instance-id=87986745-44b8-4837-b7c3-955759cb098b&requester-plmn-list=%5B%7B%22mcc%22%3A%22452%22%2C%22mnc%22%3A%2204%22%7D%5D&dnn=mddqs",
+        "connect_timeout_seconds": 3,
+        "max_time_seconds": 15,
+        "curl_insecure": false,
+        "require_registered": true
+      }
+    }
+  ]
+}
