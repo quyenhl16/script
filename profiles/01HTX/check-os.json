@@ -1,0 +1,16 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "check-os",
+  "description": "Operating system and runtime dependency checks",
+  "features": [
+    {
+      "id": "check-os",
+      "parameters": {
+        "required_commands": "bash python3 kubectl grep sed",
+        "minimum_bash_major": 4,
+        "minimum_python_minor": 6,
+        "require_tcp_client": true
+      }
+    }
+  ]
+}

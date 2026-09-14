@@ -80,9 +80,17 @@ Runner truyền parameter dưới dạng `SYSSETUP_PARAM_<NAME>`. Không dùng `
 
 Manifest dùng `apiVersion: syssetup/workflow/v1`. Mỗi step tham chiếu một
 feature `remoteOnly` hoặc feature local đã chủ động bật `workflowCompatible`, và
-chỉ được phụ thuộc step đã khai báo trước. Config
-`syssetup/workflow-config/v1` chứa danh sách invocation/args. `deriveArgs` cho
-phép step sau thu thập argument theo prefix hoặc vị trí từ config của step trước
+chỉ được phụ thuộc step đã khai báo trước.
+
+Trước khi chạy, mỗi step tự tìm profile cùng hệ thống có cấu hình feature tương
+ứng, validate parameter và điền default bằng feature registry. Parameter từ
+profile được chuyển thành argument `key=value`; profile là nguồn cấu hình duy
+nhất và ghi đè parameter cũ còn tồn tại trong workflow config.
+
+`syssetup/workflow-config/v1` chỉ cần định danh workflow. Nó vẫn có thể chứa
+invocation/args cho đối số vị trí, nhiều invocation hoặc artifact đặc thù mà
+profile không biểu diễn. `deriveArgs` cho phép step sau thu thập argument theo
+prefix hoặc vị trí từ config của step trước
 mà không lặp lại dữ liệu, ví dụ lấy argument đầu tiên (tên interface) của
 `create-vlan` cho `verify-network`. `argumentIndex` sử dụng chỉ số bắt đầu từ `0`.
 `failurePolicy` hỗ trợ `stop-server` (mặc định) và `continue`; chính sách `continue`

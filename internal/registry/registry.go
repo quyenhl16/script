@@ -101,6 +101,16 @@ func (r *Registry) Get(id string) (domain.Feature, bool) {
 	return feature, found
 }
 
+// ResolveFeatureParameters validates profile values and fills defaults for one
+// feature without applying the local-run restrictions used by Resolve.
+func (r *Registry) ResolveFeatureParameters(id string, values map[string]any) (map[string]any, error) {
+	feature, exists := r.features[id]
+	if !exists {
+		return nil, fmt.Errorf("unknown feature %q", id)
+	}
+	return resolveParameters(feature, values)
+}
+
 func (r *Registry) Resolve(profile domain.Profile) ([]domain.ResolvedFeature, error) {
 	selected := make(map[string]map[string]any, len(profile.Features))
 	for _, item := range profile.Features {

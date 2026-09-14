@@ -11,12 +11,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 
+	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
 	"github.com/quyenhl16/script/internal/remote"
 )
@@ -304,6 +306,109 @@ func (r *Registry) ValidateConfig(definition Definition, config Config) error {
 		}
 	}
 	return nil
+}
+
+// ApplyProfiles resolves every workflow step from the profile which configures
+// its feature in the selected system. Profile parameters replace matching
+// key=value arguments from the workflow config, so feature configuration has a
+// single source of truth. Positional arguments and artifacts remain intact.
+func (r *Registry) ApplyProfiles(definition Definition, config Config, profiles []domain.Profile, system string) (Config, error) {
+	for _, step := range definition.Steps {
+		if step.DeriveArgs != nil {
+			continue
+		}
+		selection, found, err := profileSelection(profiles, system, step.Feature)
+		if err != nil {
+			return Config{}, fmt.Errorf("step %q: %w", step.ID, err)
+		}
+		if !found {
+			continue
+		}
+		parameters, err := r.features.ResolveFeatureParameters(step.Feature, selection.Parameters)
+		if err != nil {
+			return Config{}, fmt.Errorf("step %q: %w", step.ID, err)
+		}
+		feature, _ := r.features.Get(step.Feature)
+		invocations := config.Steps[step.ID]
+		if len(invocations) == 0 {
+			invocation := Invocation{}
+			if !feature.RemoteOnly {
+				invocation.Args = []string{"verify"}
+			}
+			invocations = []Invocation{invocation}
+		}
+		for index := range invocations {
+			invocations[index].Args = mergeParameterArguments(invocations[index].Args, parameters)
+		}
+		if config.Steps == nil {
+			config.Steps = make(map[string][]Invocation)
+		}
+		config.Steps[step.ID] = invocations
+	}
+	return config, nil
+}
+
+func profileSelection(profiles []domain.Profile, system, featureID string) (domain.FeatureSelection, bool, error) {
+	var matches []struct {
+		profile   domain.Profile
+		selection domain.FeatureSelection
+	}
+	for _, profile := range profiles {
+		if !strings.EqualFold(profile.System, system) {
+			continue
+		}
+		for _, selection := range profile.Features {
+			if selection.ID == featureID {
+				matches = append(matches, struct {
+					profile   domain.Profile
+					selection domain.FeatureSelection
+				}{profile: profile, selection: selection})
+			}
+		}
+	}
+	for _, match := range matches {
+		if strings.EqualFold(match.profile.Name, featureID) {
+			return match.selection, true, nil
+		}
+	}
+	if len(matches) == 1 {
+		return matches[0].selection, true, nil
+	}
+	if len(matches) > 1 {
+		return domain.FeatureSelection{}, false, fmt.Errorf("multiple profiles configure feature %q; name one profile %q", featureID, featureID)
+	}
+	return domain.FeatureSelection{}, false, nil
+}
+
+func mergeParameterArguments(arguments []string, parameters map[string]any) []string {
+	result := make([]string, 0, len(arguments)+len(parameters))
+	for _, argument := range arguments {
+		name, _, keyed := strings.Cut(argument, "=")
+		if _, replaced := parameters[name]; keyed && replaced {
+			continue
+		}
+		result = append(result, argument)
+	}
+	names := make([]string, 0, len(parameters))
+	for name := range parameters {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		result = append(result, name+"="+parameterString(parameters[name]))
+	}
+	return result
+}
+
+func parameterString(value any) string {
+	switch typed := value.(type) {
+	case bool:
+		return strconv.FormatBool(typed)
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64)
+	default:
+		return fmt.Sprint(value)
+	}
 }
 
 func deriveInvocations(step Step, config Config) ([]Invocation, error) {

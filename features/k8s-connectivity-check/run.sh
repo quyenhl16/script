@@ -9,22 +9,24 @@ vip_comm="${SYSSETUP_PARAM_VIP_COMM:-68.240.36.9}"
 vip_ipgw="${SYSSETUP_PARAM_VIP_IPGW:-68.240.36.1}"
 vip_gtp="${SYSSETUP_PARAM_VIP_GTP:-68.240.36.96}"
 
-ip_ausf="${SYSSETUP_PARAM_IP_AUSF:-68.240.36.153}"
-ip_udm="${SYSSETUP_PARAM_IP_UDM:-68.240.36.153}"
-ip_smf="${SYSSETUP_PARAM_IP_SMF:-68.240.36.105}"
-ip_amf_remote="${SYSSETUP_PARAM_IP_AMF_REMOTE:-68.240.36.9}"
-ip_nrf="${SYSSETUP_PARAM_IP_NRF:-68.240.36.193}"
-ip_eir="${SYSSETUP_PARAM_IP_EIR:-68.240.136.1}"
-ip_nssf="${SYSSETUP_PARAM_IP_NSSF:-68.240.136.2}"
-ip_gnodeb="${SYSSETUP_PARAM_IP_GNODEB:-69.69.0.150}"
+ip_ausf="${SYSSETUP_PARAM_IP_AUSF-68.240.36.153}"
+ip_udm="${SYSSETUP_PARAM_IP_UDM-68.240.36.153}"
+ip_smf="${SYSSETUP_PARAM_IP_SMF-68.240.36.105}"
+ip_amf_self="${SYSSETUP_PARAM_IP_AMF_SELF:-}"
+ip_amf_remote="${SYSSETUP_PARAM_IP_AMF_REMOTE-68.240.36.9}"
+ip_nrf="${SYSSETUP_PARAM_IP_NRF-68.240.36.193}"
+ip_eir="${SYSSETUP_PARAM_IP_EIR-68.240.136.1}"
+ip_nssf="${SYSSETUP_PARAM_IP_NSSF-68.240.136.2}"
+ip_gnodeb="${SYSSETUP_PARAM_IP_GNODEB-69.69.0.150}"
 
-curl_ausf_urls="${SYSSETUP_PARAM_CURL_AUSF_URLS:-http://68.240.36.153/}"
-curl_udm_urls="${SYSSETUP_PARAM_CURL_UDM_URLS:-http://68.240.36.153/}"
-curl_smf_urls="${SYSSETUP_PARAM_CURL_SMF_URLS:-http://68.240.36.105/}"
-curl_amf_remote_urls="${SYSSETUP_PARAM_CURL_AMF_REMOTE_URLS:-http://68.240.36.9/}"
-curl_nrf_urls="${SYSSETUP_PARAM_CURL_NRF_URLS:-http://68.240.36.193/}"
-curl_eir_urls="${SYSSETUP_PARAM_CURL_EIR_URLS:-http://68.240.136.1/}"
-curl_nssf_urls="${SYSSETUP_PARAM_CURL_NSSF_URLS:-http://68.240.136.2/}"
+curl_ausf_urls="${SYSSETUP_PARAM_CURL_AUSF_URLS-http://68.240.36.153/}"
+curl_udm_urls="${SYSSETUP_PARAM_CURL_UDM_URLS-http://68.240.36.153/}"
+curl_smf_urls="${SYSSETUP_PARAM_CURL_SMF_URLS-http://68.240.36.105/}"
+curl_amf_self_urls="${SYSSETUP_PARAM_CURL_AMF_SELF_URLS:-}"
+curl_amf_remote_urls="${SYSSETUP_PARAM_CURL_AMF_REMOTE_URLS-http://68.240.36.9/}"
+curl_nrf_urls="${SYSSETUP_PARAM_CURL_NRF_URLS-http://68.240.36.193/}"
+curl_eir_urls="${SYSSETUP_PARAM_CURL_EIR_URLS-http://68.240.136.1/}"
+curl_nssf_urls="${SYSSETUP_PARAM_CURL_NSSF_URLS-http://68.240.136.2/}"
 curl_connect_timeout="${SYSSETUP_PARAM_CURL_CONNECT_TIMEOUT_SECONDS:-3}"
 curl_max_time="${SYSSETUP_PARAM_CURL_MAX_TIME_SECONDS:-10}"
 curl_insecure="${SYSSETUP_PARAM_CURL_INSECURE:-false}"
@@ -41,6 +43,7 @@ parse_workflow_arguments() {
       ip_ausf=*) ip_ausf="${argument#*=}" ;;
       ip_udm=*) ip_udm="${argument#*=}" ;;
       ip_smf=*) ip_smf="${argument#*=}" ;;
+      ip_amf_self=*) ip_amf_self="${argument#*=}" ;;
       ip_amf_remote=*) ip_amf_remote="${argument#*=}" ;;
       ip_nrf=*) ip_nrf="${argument#*=}" ;;
       ip_eir=*) ip_eir="${argument#*=}" ;;
@@ -49,6 +52,7 @@ parse_workflow_arguments() {
       curl_ausf_urls=*) curl_ausf_urls="${argument#*=}" ;;
       curl_udm_urls=*) curl_udm_urls="${argument#*=}" ;;
       curl_smf_urls=*) curl_smf_urls="${argument#*=}" ;;
+      curl_amf_self_urls=*) curl_amf_self_urls="${argument#*=}" ;;
       curl_amf_remote_urls=*) curl_amf_remote_urls="${argument#*=}" ;;
       curl_nrf_urls=*) curl_nrf_urls="${argument#*=}" ;;
       curl_eir_urls=*) curl_eir_urls="${argument#*=}" ;;
@@ -179,6 +183,7 @@ validate_configuration() {
     "ip_ausf=$ip_ausf"
     "ip_udm=$ip_udm"
     "ip_smf=$ip_smf"
+    "ip_amf_self=$ip_amf_self"
     "ip_amf_remote=$ip_amf_remote"
     "ip_nrf=$ip_nrf"
     "ip_eir=$ip_eir"
@@ -189,12 +194,12 @@ validate_configuration() {
     "curl_ausf_urls=$curl_ausf_urls"
     "curl_udm_urls=$curl_udm_urls"
     "curl_smf_urls=$curl_smf_urls"
+    "curl_amf_self_urls=$curl_amf_self_urls"
     "curl_amf_remote_urls=$curl_amf_remote_urls"
     "curl_nrf_urls=$curl_nrf_urls"
     "curl_eir_urls=$curl_eir_urls"
     "curl_nssf_urls=$curl_nssf_urls"
   )
-
   case "$phase" in
     vip|ospf|ping|curl|all) ;;
     *)
@@ -220,12 +225,14 @@ validate_configuration() {
   for setting in "${ip_list_settings[@]}"; do
     name="${setting%%=*}"
     value="${setting#*=}"
+    [[ -z "$value" ]] && continue
     validate_ipv4_list "$name" "$value" || return 2
   done
 
   for setting in "${url_list_settings[@]}"; do
     name="${setting%%=*}"
     value="${setting#*=}"
+    [[ -z "$value" ]] && continue
     validate_url_list "$name" "$value" || return 2
   done
 
@@ -341,12 +348,13 @@ phase_check_connectivity() {
   local -a gnodeb_targets
   local -a ipgw_pods
   local -a mm_pods
-  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF EIR NSSF)
+  local -a nf_names=(AUSF UDM SMF AMF_SELF AMF_REMOTE NRF EIR NSSF)
   local -a target_ips
   declare -A nf_targets=(
     [AUSF]="$ip_ausf"
     [UDM]="$ip_udm"
     [SMF]="$ip_smf"
+    [AMF_SELF]="$ip_amf_self"
     [AMF_REMOTE]="$ip_amf_remote"
     [NRF]="$ip_nrf"
     [EIR]="$ip_eir"
@@ -467,11 +475,12 @@ phase_check_http() {
   local url
   local -a mm_pods
   local -a target_urls
-  local -a nf_names=(AUSF UDM SMF AMF_REMOTE NRF EIR NSSF)
+  local -a nf_names=(AUSF UDM SMF AMF_SELF AMF_REMOTE NRF EIR NSSF)
   declare -A nf_urls=(
     [AUSF]="$curl_ausf_urls"
     [UDM]="$curl_udm_urls"
     [SMF]="$curl_smf_urls"
+    [AMF_SELF]="$curl_amf_self_urls"
     [AMF_REMOTE]="$curl_amf_remote_urls"
     [NRF]="$curl_nrf_urls"
     [EIR]="$curl_eir_urls"

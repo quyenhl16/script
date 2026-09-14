@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Audit pod VIPs, OSPF adjacencies, ping paths and HTTP connectivity to peer NFs",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
@@ -56,6 +56,11 @@
       "description": "Remote AMF IPv4 list, separated by commas or spaces",
       "default": "68.240.36.9"
     },
+    "ip_amf_self": {
+      "type": "string",
+      "description": "Self AMF IPv4 list, separated by commas or spaces; empty disables the check",
+      "default": ""
+    },
     "ip_nrf": {
       "type": "string",
       "description": "Remote NRF IPv4 list, separated by commas or spaces",
@@ -95,6 +100,11 @@
       "type": "string",
       "description": "Remote AMF HTTP(S) URL list, separated by commas or spaces",
       "default": "http://68.240.36.9/"
+    },
+    "curl_amf_self_urls": {
+      "type": "string",
+      "description": "Self AMF HTTP(S) URL list, separated by commas or spaces; empty disables the check",
+      "default": ""
     },
     "curl_nrf_urls": {
       "type": "string",

@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	profileconfig "github.com/quyenhl16/script/internal/config"
+	"github.com/quyenhl16/script/internal/domain"
 	"github.com/quyenhl16/script/internal/registry"
 	"github.com/quyenhl16/script/internal/remote"
 )
@@ -179,14 +181,74 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	profiles, err := profileconfig.LoadProfiles(filepath.Join("..", "..", "profiles"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config, err = workflows.ApplyProfiles(definition, config, profiles, "01HTX")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := workflows.ValidateConfig(definition, config); err != nil {
 		t.Fatal(err)
 	}
-	for _, stepID := range []string{"resource-check", "env-check"} {
-		invocations := config.Steps[stepID]
-		if len(invocations) != 1 || len(invocations[0].Artifacts) != 2 {
-			t.Fatalf("step %q must expose the workbook and checker: %#v", stepID, invocations)
-		}
+	resourceInvocations := config.Steps["resource-check"]
+	if len(resourceInvocations) != 1 || !contains(resourceInvocations[0].Args, "namespace=pramf01") ||
+		!contains(resourceInvocations[0].Args, "input_file=pramf01-input_100K.xlsx") {
+		t.Fatalf("resource-check was not built from its profile: %#v", resourceInvocations)
+	}
+	connectivityInvocations := config.Steps["connectivity-check"]
+	if len(connectivityInvocations) != 1 || !contains(connectivityInvocations[0].Args, "ip_amf_self=") ||
+		!contains(connectivityInvocations[0].Args, "curl_amf_self_urls=") ||
+		!contains(connectivityInvocations[0].Args, "ip_nssf=") ||
+		!contains(connectivityInvocations[0].Args, "curl_nssf_urls=") {
+		t.Fatalf("optional NF parameters were not built from the connectivity profile: %#v", connectivityInvocations)
+	}
+}
+
+func TestApplyProfilesOverridesWorkflowParameterArguments(t *testing.T) {
+	featuresRoot := t.TempDir()
+	directory := filepath.Join(featuresRoot, "check")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{
+  "apiVersion":"syssetup/v1", "id":"check", "name":"Check", "version":"1",
+  "entrypoint":"run.sh", "workflowCompatible":true, "timeoutSeconds":30,
+  "parameters":{
+    "namespace":{"type":"string","default":"default-ns"},
+    "show_pass":{"type":"boolean","default":false}
+  }
+}`
+	if err := os.WriteFile(filepath.Join(directory, "feature.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "run.sh"), []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows := &Registry{features: features}
+	definition := Definition{Steps: []Step{{ID: "check-step", Feature: "check"}}}
+	config := Config{Steps: map[string][]Invocation{
+		"check-step": {{Args: []string{"verify", "namespace=stale", "unrelated=keep"}}},
+	}}
+	profiles := []domain.Profile{{
+		Name: "check", System: "system-a",
+		Features: []domain.FeatureSelection{{
+			ID: "check", Parameters: map[string]any{"namespace": "profile-ns", "show_pass": true},
+		}},
+	}}
+
+	got, err := workflows.ApplyProfiles(definition, config, profiles, "system-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"verify", "unrelated=keep", "namespace=profile-ns", "show_pass=true"}
+	if !reflect.DeepEqual(got.Steps["check-step"][0].Args, want) {
+		t.Fatalf("profile arguments = %#v, want %#v", got.Steps["check-step"][0].Args, want)
 	}
 }
 

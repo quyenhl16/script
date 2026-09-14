@@ -815,6 +815,12 @@ func (m *model) startWorkflowRun() tea.Cmd {
 		m.notice = "Workflow: " + m.remoteErr.Error()
 		return nil
 	}
+	config, err = m.workflowRegistry.ApplyProfiles(definition, config, m.profiles, m.profile.System)
+	if err != nil {
+		m.remoteErr = err
+		m.notice = "Workflow profiles: " + err.Error()
+		return nil
+	}
 	if err := m.workflowRegistry.ValidateConfig(definition, config); err != nil {
 		m.remoteErr = err
 		m.notice = "Workflow: " + err.Error()

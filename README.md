@@ -53,8 +53,9 @@ hỗ trợ:
 {
   "ip_ausf": "192.0.2.10, 192.0.2.11",
   "ip_udm": "192.0.2.20 192.0.2.21",
+  "ip_amf_self": "192.0.2.34",
   "ip_eir": "192.0.2.41",
-  "ip_nssf": "192.0.2.42",
+  "ip_nssf": "",
   "ip_gnodeb": "198.51.100.10, 198.51.100.11"
 }
 ```
@@ -69,10 +70,11 @@ phép khai báo port và path riêng cho từng NF:
   "curl_ausf_urls": "http://192.0.2.10:8080/health http://192.0.2.11:8080/health",
   "curl_udm_urls": "https://192.0.2.20:8443/health",
   "curl_smf_urls": "http://192.0.2.30:8080/",
+  "curl_amf_self_urls": "http://192.0.2.34:8080/health",
   "curl_amf_remote_urls": "http://192.0.2.35:8080/health",
   "curl_nrf_urls": "http://192.0.2.40:8080/nnrf-nfm/v1/nf-instances",
   "curl_eir_urls": "http://192.0.2.41/",
-  "curl_nssf_urls": "http://192.0.2.42/",
+  "curl_nssf_urls": "",
   "curl_connect_timeout_seconds": 3,
   "curl_max_time_seconds": 10,
   "curl_insecure": false
@@ -201,10 +203,12 @@ thống Kubernetes đã lên:
 5. k8s-connectivity-check sau env-check
 ```
 
-Trước khi chạy, đặt file Excel baseline đúng đường dẫn:
+Trước khi chạy riêng feature hoặc chạy workflow, đặt file Excel baseline tại
+đường dẫn `input_file` đã khai trong profile. Với profile mẫu, chạy lệnh sau từ
+thư mục gốc dự án:
 
 ```bash
-cp /path/to/pramf01-input_100K.xlsx workflow-configs/artifacts/pramf01-input_100K.xlsx
+cp /path/to/pramf01-input_100K.xlsx pramf01-input_100K.xlsx
 ```
 
 Mở tab `5 Workflows`, chọn `post-deployment-validation` rồi nhấn `F5`; workflow
@@ -213,6 +217,10 @@ chạy local và không yêu cầu server, user hoặc password SSH. Máy đang 
 `python3`, `curl` hoặc `telnet` theo loại kiểm tra. Nếu một bước lỗi, workflow vẫn
 ghi nhận lỗi và tiếp tục chạy các bước còn lại. Output `stdout`/`stderr` của step
 đang chạy được cập nhật trực tiếp trong khung `Local workflow results`.
+
+Mỗi step lấy parameter từ profile cùng hệ thống có chứa feature tương ứng (ưu
+tiên profile có tên trùng feature ID). Vì vậy chỉ cần sửa profile feature; không
+cần lặp lại `key=value` trong `workflow-configs/post-deployment-validation.json`.
 
 ## TUI dashboard
 
