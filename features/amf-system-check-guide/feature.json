@@ -1,0 +1,11 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "amf-system-check-guide",
+  "name": "AMF System Check Guide",
+  "version": "1.0.0",
+  "description": "Display a structured guide for AMF system verification before and after CNF installation",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 30
+}

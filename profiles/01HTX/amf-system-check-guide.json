@@ -1,0 +1,10 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "amf-system-check-guide",
+  "description": "Display the AMF system verification guide",
+  "features": [
+    {
+      "id": "amf-system-check-guide"
+    }
+  ]
+}

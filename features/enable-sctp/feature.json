@@ -1,0 +1,12 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "enable-sctp",
+  "name": "Enable SCTP",
+  "version": "1.0.0",
+  "description": "Install, enable and load the SCTP kernel module on RHEL 8 or later servers",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel"],
+  "requireRoot": true,
+  "remoteOnly": true,
+  "timeoutSeconds": 600
+}

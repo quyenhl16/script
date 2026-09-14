@@ -1,0 +1,18 @@
+{
+  "apiVersion": "syssetup/v1",
+  "name": "export-netconf-config",
+  "description": "Export the AMF running configuration from the active NetConf pod",
+  "features": [
+    {
+      "id": "export-netconf-config",
+      "parameters": {
+        "namespace": "your-namespace",
+        "container": "",
+        "confd_dir": ".",
+        "remote_config_file": "amf-running-config.xml",
+        "destination_config_file": "amf-running-config.xml",
+        "overwrite": false
+      }
+    }
+  ]
+}

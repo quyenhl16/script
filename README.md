@@ -222,6 +222,12 @@ Mỗi step lấy parameter từ profile cùng hệ thống có chứa feature t�
 tiên profile có tên trùng feature ID). Vì vậy chỉ cần sửa profile feature; không
 cần lặp lại `key=value` trong `workflow-configs/post-deployment-validation.json`.
 
+### AMF system verification guide
+
+Profile `profiles/01HTX/amf-system-check-guide.json` chạy feature chỉ-đọc
+`amf-system-check-guide`. Guide tiếng Anh được hiển thị trong tab `Logs`, gồm ba
+phần: trước khi cài AMF CNF, sau khi cài AMF CNF và thông tin bổ sung.
+
 ## TUI dashboard
 
 TUI chạy toàn màn hình theo phong cách dashboard quản trị như k9s:
@@ -347,6 +353,22 @@ lưu file cấu hình cũ trước khi thay đổi và chỉ chấp nhận VLAN 
 Mỗi argument được quote riêng trước khi gửi qua SSH; script chạy bằng `bash` và
 yêu cầu SSH trực tiếp bằng tài khoản `root`.
 
+### Enable SCTP trên RHEL qua SSH
+
+Feature `enable-sctp` cài và kích hoạt SCTP trên các server Red Hat Enterprise
+Linux 8 trở lên:
+
+1. Trong tab `Features`, tìm `enable-sctp` và nhấn `Enter` để mở script trong
+   `Remote SSH`.
+2. Nạp server và credential từ profile `base-server` bằng `F3`, hoặc nhập thủ
+   công. Tài khoản SSH phải là `root`; trường `Args` để trống.
+3. Nhấn `F5` để chạy song song trên tất cả server.
+
+Script cài gói `kernel-modules-extra-$(uname -r)`, ghi `sctp` vào
+`/etc/modules-load.d/sctp.conf`, comment dòng blacklist cuối nếu dòng đó còn hoạt
+động, chạy `modprobe sctp` và xác nhận module xuất hiện trong `lsmod`. Script từ
+chối hệ điều hành không phải RHEL hoặc RHEL cũ hơn phiên bản 8.
+
 ### Tạo danh sách thư mục qua SSH
 
 Feature `create-local-path` tạo một hoặc nhiều thư mục trên tất cả server đã
@@ -404,6 +426,43 @@ Máy chạy `syssetup` cần có `kubectl` và quyền `get pod`, `pods/exec` tr
 namespace. Nếu pod có nhiều container, đặt `container` thành tên container chạy
 ConfD. `confd_dir` mặc định là working directory của container; nếu `run_cli.sh`
 nằm ở chỗ khác, đặt tham số này thành đường dẫn thư mục đó.
+
+### Export XML config từ NetConf pod master
+
+Feature `export-netconf-config` là chiều ngược lại của `load-netconf-config`. Nó
+xác định duy nhất pod `netconf-0` hoặc `netconf-1` đang có ConfD HA mode
+`master`, mở `run_cli.sh` và chạy:
+
+```text
+show running-config amf | display xml | save amf-running-config.xml
+```
+
+Cấu hình feature tại `profiles/01HTX/export-netconf-config.json`:
+
+```json
+{
+  "id": "export-netconf-config",
+  "parameters": {
+    "namespace": "your-namespace",
+    "container": "",
+    "confd_dir": ".",
+    "remote_config_file": "amf-running-config.xml",
+    "destination_config_file": "amf-running-config.xml",
+    "overwrite": false
+  }
+}
+```
+
+Sau khi CLI tạo file trong pod master, feature dùng `kubectl cp` để copy file về
+`destination_config_file`, kiểm tra file không rỗng và có nội dung XML, đặt quyền
+local thành `0600`, rồi xóa file tạm trong pod. Feature mặc định từ chối ghi đè;
+đặt `overwrite=true` nếu muốn thay thế file local đã tồn tại. Container NetConf
+cần có lệnh `tar` vì `kubectl cp` sử dụng nó để truyền file.
+
+```bash
+./bin/syssetup plan --profile profiles/01HTX/export-netconf-config.json
+./bin/syssetup run --profile profiles/01HTX/export-netconf-config.json
+```
 
 ### Kiểm tra XML config local
 

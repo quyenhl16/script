@@ -1,0 +1,43 @@
+{
+  "apiVersion": "syssetup/v1",
+  "id": "export-netconf-config",
+  "name": "Export NetConf Configuration",
+  "version": "1.0.0",
+  "description": "Export the AMF running configuration from the active ConfD master pod to a local XML file",
+  "entrypoint": "run.sh",
+  "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
+  "requireRoot": false,
+  "timeoutSeconds": 300,
+  "parameters": {
+    "namespace": {
+      "type": "string",
+      "description": "Kubernetes namespace containing netconf-0 and netconf-1",
+      "required": true
+    },
+    "container": {
+      "type": "string",
+      "description": "Container name when the NetConf pod has multiple containers",
+      "default": ""
+    },
+    "confd_dir": {
+      "type": "string",
+      "description": "Directory containing run_cli.sh and the exported XML file",
+      "default": "."
+    },
+    "remote_config_file": {
+      "type": "string",
+      "description": "Temporary XML filename created inside the ConfD directory",
+      "default": "amf-running-config.xml"
+    },
+    "destination_config_file": {
+      "type": "string",
+      "description": "Path of the local XML file receiving the exported configuration",
+      "default": "amf-running-config.xml"
+    },
+    "overwrite": {
+      "type": "boolean",
+      "description": "Allow replacement of an existing local destination file",
+      "default": false
+    }
+  }
+}

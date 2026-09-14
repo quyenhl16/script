@@ -99,6 +99,23 @@ func TestResolveRejectsRemoteOnlyFeature(t *testing.T) {
 	}
 }
 
+func TestBundledEnableSCTPIsRemoteOnly(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	feature, found := registry.Get("enable-sctp")
+	if !found {
+		t.Fatal("bundled enable-sctp feature was not found")
+	}
+	if !feature.RemoteOnly || !feature.RequireRoot {
+		t.Fatalf("enable-sctp must be a root remote-only feature: %#v", feature)
+	}
+	if len(feature.SupportedOS) != 1 || feature.SupportedOS[0] != "rhel" {
+		t.Fatalf("enable-sctp supportedOS = %#v, want [rhel]", feature.SupportedOS)
+	}
+}
+
 func TestBundledVerifyXMLConfigIsLocal(t *testing.T) {
 	registry, err := Load(filepath.Join("..", "..", "features"))
 	if err != nil {
@@ -122,6 +139,24 @@ func TestBundledVerifyXMLConfigIsLocal(t *testing.T) {
 	}
 	if got := resolved[0].Parameters["rules_file"]; got != "checks/xml/system-critical-paths.json" {
 		t.Fatalf("rules_file default = %#v", got)
+	}
+}
+
+func TestBundledAMFSystemCheckGuideIsLocal(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := registry.Resolve(domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "amf-guide",
+		Features:   []domain.FeatureSelection{{ID: "amf-system-check-guide"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 1 || resolved[0].Feature.RemoteOnly || resolved[0].Feature.RequireRoot {
+		t.Fatalf("AMF guide must be an unprivileged local feature: %#v", resolved)
 	}
 }
 
@@ -152,6 +187,38 @@ func TestBundledLoadNetConfConfigIsLocal(t *testing.T) {
 	}
 	if got := resolved[0].Parameters["confd_dir"]; got != "." {
 		t.Fatalf("confd_dir default = %#v", got)
+	}
+}
+
+func TestBundledExportNetConfConfigIsLocal(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := registry.Resolve(domain.Profile{
+		APIVersion: "syssetup/v1",
+		Name:       "export-netconf",
+		Features: []domain.FeatureSelection{{
+			ID: "export-netconf-config",
+			Parameters: map[string]any{
+				"namespace": "test-ns",
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(resolved) != 1 || resolved[0].Feature.RemoteOnly {
+		t.Fatalf("export-netconf-config must resolve as a local feature: %#v", resolved)
+	}
+	if got := resolved[0].Parameters["remote_config_file"]; got != "amf-running-config.xml" {
+		t.Fatalf("remote_config_file default = %#v", got)
+	}
+	if got := resolved[0].Parameters["destination_config_file"]; got != "amf-running-config.xml" {
+		t.Fatalf("destination_config_file default = %#v", got)
+	}
+	if got := resolved[0].Parameters["overwrite"]; got != false {
+		t.Fatalf("overwrite default = %#v", got)
 	}
 }
 
