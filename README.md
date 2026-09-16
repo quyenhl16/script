@@ -177,11 +177,21 @@ hay `2000m`/`2` được coi là bằng nhau. Resource chính được đối ch
 `containers[].resources`; resource init chỉ được kiểm tra khi Excel có giá trị
 `init_resources_*`.
 
+Dòng `pv_storage` là tùy chọn. Với mỗi service có khai giá trị ở dòng này,
+feature tìm PVC được workload tham chiếu, theo `spec.template.spec.volumes` hoặc
+`volumeClaimTemplates` của StatefulSet, rồi kiểm tra `spec.capacity.storage` của
+từng PV đã bind. Tất cả PV của các replica phải có dung lượng đúng với Excel;
+PVC chưa bind, PV không tồn tại hoặc một PV sai dung lượng đều làm kết quả FAIL.
+Tài khoản chạy `kubectl` cần quyền đọc PVC trong namespace và đọc PV ở cluster.
+
 Tên workload/container được tự suy luận như `k8s-env-check`. Với workload có
 nhiều container hoặc init container, dùng `mapping_file` theo mẫu
 `checks/k8s-resource/workload-map.example.json`. `extra_policy` nhận `warn`,
 `fail` hoặc `ignore`; `ignore_extra` nhận glob của đường dẫn resource, ví dụ
 `container.requests.hugepages-*`.
+Khi `show_pass=true`, mỗi resource khớp vẫn hiển thị riêng giá trị `expected`
+từ Excel và `actual` từ Kubernetes, kể cả khi hai quantity chỉ tương đương sau
+chuẩn hóa như `2000m` và `2`.
 
 Hoặc:
 
@@ -453,11 +463,12 @@ Cấu hình feature tại `profiles/01HTX/export-netconf-config.json`:
 }
 ```
 
-Sau khi CLI tạo file trong pod master, feature dùng `kubectl cp` để copy file về
-`destination_config_file`, kiểm tra file không rỗng và có nội dung XML, đặt quyền
-local thành `0600`, rồi xóa file tạm trong pod. Feature mặc định từ chối ghi đè;
-đặt `overwrite=true` nếu muốn thay thế file local đã tồn tại. Container NetConf
-cần có lệnh `tar` vì `kubectl cp` sử dụng nó để truyền file.
+Sau khi CLI tạo file trong pod master, feature truyền trực tiếp nội dung file về
+`destination_config_file` qua `kubectl exec`, kiểm tra file không rỗng và có nội
+dung XML, đặt quyền local thành `0600`, rồi xóa file tạm trong pod. Feature mặc
+định từ chối ghi đè; đặt `overwrite=true` nếu muốn thay thế file local đã tồn tại.
+Cách truyền trực tiếp không phụ thuộc vào `tar` và tránh lỗi
+`tar contents corrupted` của `kubectl cp` trên một số minimal container image.
 
 ```bash
 ./bin/syssetup plan --profile profiles/01HTX/export-netconf-config.json

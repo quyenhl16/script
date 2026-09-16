@@ -17,7 +17,7 @@
         "memory_default_unit": "Mi",
         "extra_policy": "warn",
         "ignore_extra": "",
-        "show_pass": false
+        "show_pass": true
       }
     }
   ]

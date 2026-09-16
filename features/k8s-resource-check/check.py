@@ -31,7 +31,10 @@ RESOURCE_ATTRIBUTES = {
     "num_cpus_limit": ("container", "limits", "cpu", "cpu"),
     "init_resources_cpu": ("initContainer", "requests", "cpu", "cpu"),
     "init_resources_mem": ("initContainer", "requests", "memory", "memory"),
+    "pv_storage": ("persistentVolume", "capacity", "storage", "memory"),
 }
+REQUIRED_RESOURCE_ATTRIBUTES = set(RESOURCE_ATTRIBUTES) - {"pv_storage"}
+PV_STORAGE_PATH = "persistentVolume.capacity.storage"
 
 CPU_MULTIPLIERS = {
     "": Decimal(1),
@@ -316,7 +319,7 @@ def read_baseline(arguments):
                 "source_cell": cell["reference"],
             }
 
-    missing_attributes = sorted(set(RESOURCE_ATTRIBUTES) - set(found_attributes))
+    missing_attributes = sorted(REQUIRED_RESOURCE_ATTRIBUTES - set(found_attributes))
     if missing_attributes:
         raise InputError("worksheet is missing resource attributes: {}".format(", ".join(missing_attributes)))
     expected_count = sum(len(resources) for resources in components.values())
@@ -386,6 +389,18 @@ def workload_snapshot(namespace):
     if not isinstance(items, list):
         raise KubernetesError("kubectl workload response does not contain an items array")
     return items
+
+
+def storage_snapshot(namespace):
+    claim_document = kubectl_json(["get", "persistentvolumeclaim", "-n", namespace])
+    volume_document = kubectl_json(["get", "persistentvolume"])
+    claims = claim_document.get("items")
+    volumes = volume_document.get("items")
+    if not isinstance(claims, list):
+        raise KubernetesError("kubectl persistentvolumeclaim response does not contain an items array")
+    if not isinstance(volumes, list):
+        raise KubernetesError("kubectl persistentvolume response does not contain an items array")
+    return claims, volumes
 
 
 def normalized_component(component):
@@ -463,12 +478,70 @@ def flatten_resources(container, scope):
     return result
 
 
+def workload_persistent_volumes(workload, claims, volumes):
+    workload_name = workload.get("metadata", {}).get("name", "")
+    claim_names = set()
+    pod_spec = workload.get("spec", {}).get("template", {}).get("spec", {}) or {}
+    for volume in pod_spec.get("volumes", []) or []:
+        claim_name = (volume.get("persistentVolumeClaim") or {}).get("claimName")
+        if claim_name:
+            claim_names.add(claim_name)
+
+    if workload.get("kind", "").lower() == "statefulset":
+        for template in workload.get("spec", {}).get("volumeClaimTemplates", []) or []:
+            template_name = template.get("metadata", {}).get("name", "")
+            prefix = "{}-{}-".format(template_name, workload_name)
+            if template_name and workload_name:
+                claim_names.update(
+                    claim.get("metadata", {}).get("name")
+                    for claim in claims
+                    if claim.get("metadata", {}).get("name", "").startswith(prefix)
+                )
+
+    claims_by_name = {claim.get("metadata", {}).get("name"): claim for claim in claims}
+    volumes_by_name = {volume.get("metadata", {}).get("name"): volume for volume in volumes}
+    resolved = []
+    for claim_name in sorted(name for name in claim_names if name):
+        claim = claims_by_name.get(claim_name)
+        if claim is None:
+            resolved.append({"pvc": claim_name, "error": "PVC was not found"})
+            continue
+        volume_name = claim.get("spec", {}).get("volumeName", "")
+        if not volume_name:
+            resolved.append({"pvc": claim_name, "error": "PVC is not bound to a PV"})
+            continue
+        volume = volumes_by_name.get(volume_name)
+        if volume is None:
+            resolved.append({"pvc": claim_name, "pv": volume_name, "error": "PV was not found"})
+            continue
+        storage = (volume.get("spec", {}).get("capacity", {}) or {}).get("storage")
+        if storage is None:
+            resolved.append({"pvc": claim_name, "pv": volume_name, "error": "PV has no storage capacity"})
+            continue
+        resolved.append({"pvc": claim_name, "pv": volume_name, "storage": str(storage)})
+    return resolved
+
+
+def display_persistent_volumes(resolved):
+    if not resolved:
+        return "no PVC referenced by workload"
+    details = []
+    for item in resolved:
+        if "error" in item:
+            details.append("{} ({})".format(item.get("pvc", "?"), item["error"]))
+        else:
+            details.append("{} (pvc={}, pv={})".format(item["storage"], item["pvc"], item["pv"]))
+    return ", ".join(details)
+
+
 def ignored_extra(path, patterns):
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
 def audit(arguments, baseline, mappings):
     workloads = workload_snapshot(arguments.namespace)
+    checks_storage = any(PV_STORAGE_PATH in expected for expected in baseline["components"].values())
+    claims, volumes = storage_snapshot(arguments.namespace) if checks_storage else ([], [])
     ignore_patterns = [part for part in re.split(r"[\s,]+", arguments.ignore_extra.strip()) if part]
     stats = {
         "components": len(baseline["components"]),
@@ -512,6 +585,46 @@ def audit(arguments, baseline, mappings):
         )
 
         for path, rule in sorted(expected.items()):
+            if path == PV_STORAGE_PATH:
+                resolved = workload_persistent_volumes(workload, claims, volumes)
+                actual_display = display_persistent_volumes(resolved)
+                if not resolved or any("error" in item for item in resolved):
+                    stats["missing"] += 1
+                    print(
+                        "[FAIL] [MISSING] {}/{} expected={} actual={} source={}".format(
+                            component, path, rule["display"], actual_display, rule["source_cell"]
+                        )
+                    )
+                    continue
+                try:
+                    matches = all(
+                        parse_quantity(item["storage"], rule["resource_type"]) == rule["normalized"]
+                        for item in resolved
+                    )
+                except QuantityError as error:
+                    stats["mismatch"] += 1
+                    print(
+                        "[FAIL] [MISMATCH] {}/{} expected={} actual={} error={} source={}".format(
+                            component, path, rule["display"], actual_display, error, rule["source_cell"]
+                        )
+                    )
+                    continue
+                if matches:
+                    stats["passed"] += 1
+                    if arguments.show_pass:
+                        print(
+                            "[PASS] [MATCH] {}/{} expected={} actual={} source={}".format(
+                                component, path, rule["display"], actual_display, rule["source_cell"]
+                            )
+                        )
+                else:
+                    stats["mismatch"] += 1
+                    print(
+                        "[FAIL] [MISMATCH] {}/{} expected={} actual={} source={}".format(
+                            component, path, rule["display"], actual_display, rule["source_cell"]
+                        )
+                    )
+                continue
             if path not in actual:
                 stats["missing"] += 1
                 print("[FAIL] [MISSING] {}/{} expected={} source={}".format(component, path, rule["display"], rule["source_cell"]))
@@ -525,7 +638,15 @@ def audit(arguments, baseline, mappings):
             if deployed == rule["normalized"]:
                 stats["passed"] += 1
                 if arguments.show_pass:
-                    print("[PASS] [MATCH] {}/{} value={} source={}".format(component, path, rule["display"], rule["source_cell"]))
+                    print(
+                        "[PASS] [MATCH] {}/{} expected={} actual={} source={}".format(
+                            component,
+                            path,
+                            rule["display"],
+                            clean_quantity(actual[path]),
+                            rule["source_cell"],
+                        )
+                    )
             else:
                 stats["mismatch"] += 1
                 print(

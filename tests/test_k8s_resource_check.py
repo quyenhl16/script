@@ -30,7 +30,7 @@ def inline_cell(reference, value):
     return '<c r="{}" t="inlineStr"><is><t>{}</t></is></c>'.format(reference, escaped)
 
 
-def write_workbook(path, omit_attribute=""):
+def write_workbook(path, omit_attribute="", include_pv=False):
     attributes = [
         ("mem_size", "4096", "32768"),
         ("num_cpus", "4000", "20000"),
@@ -39,6 +39,8 @@ def write_workbook(path, omit_attribute=""):
         ("init_resources_cpu", "", "\u201c2000m\u201d"),
         ("init_resources_mem", "", "\u201c4Gi\u201d"),
     ]
+    if include_pv:
+        attributes.append(("pv_storage", "10240", ""))
     rows = [
         '<row r="1">{}</row>'.format("".join([
             inline_cell("B1", "Thuộc tính"),
@@ -147,6 +149,17 @@ class ExcelBaselineTests(unittest.TestCase):
             with self.assertRaisesRegex(self.checker.InputError, "missing resource attributes"):
                 self.checker.read_baseline(baseline_arguments(path))
 
+    def test_reads_optional_pv_storage_with_memory_default_unit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "baseline.xlsx")
+            write_workbook(path, include_pv=True)
+            baseline = self.checker.read_baseline(baseline_arguments(path))
+
+        storage = baseline["components"]["comm"]["persistentVolume.capacity.storage"]
+        self.assertEqual(storage["normalized"], Decimal(10) * Decimal(1024) ** 3)
+        self.assertEqual(storage["display"], "10240Mi")
+        self.assertEqual(storage["source_cell"], "D8")
+
 
 class AuditTests(unittest.TestCase):
     def setUp(self):
@@ -196,7 +209,7 @@ class AuditTests(unittest.TestCase):
             namespace="pramf01",
             ignore_extra="",
             extra_policy="warn",
-            show_pass=False,
+            show_pass=True,
         )
         original_snapshot = self.checker.workload_snapshot
         self.checker.workload_snapshot = lambda namespace: workloads
@@ -212,6 +225,14 @@ class AuditTests(unittest.TestCase):
         self.assertEqual(stats["missing"], 1)
         self.assertEqual(stats["extra"], 1)
         self.assertEqual(stats["failures"], 1)
+        self.assertIn(
+            "[PASS] [MATCH] comm/container.requests.cpu expected=2000m actual=2 source=D2",
+            rendered,
+        )
+        self.assertIn(
+            "[PASS] [MATCH] comm/container.requests.memory expected=4096Mi actual=4Gi source=D3",
+            rendered,
+        )
         self.assertIn("[FAIL] [MISSING] mm/container.requests.cpu", rendered)
         self.assertIn("[WARN] [EXTRA] comm/container.limits.cpu", rendered)
 
@@ -233,6 +254,69 @@ class AuditTests(unittest.TestCase):
             init=True,
         )
         self.assertEqual(selected["name"], "prepare")
+
+    def test_checks_every_bound_pv_capacity_for_a_statefulset(self):
+        workloads = [{
+            "kind": "StatefulSet",
+            "metadata": {"name": "database", "labels": {}},
+            "spec": {
+                "template": {"spec": {"containers": [{"name": "database", "resources": {}}]}},
+                "volumeClaimTemplates": [{"metadata": {"name": "data"}}],
+            },
+        }]
+        claims = [
+            {"metadata": {"name": "data-database-0"}, "spec": {"volumeName": "pv-database-0"}},
+            {"metadata": {"name": "data-database-1"}, "spec": {"volumeName": "pv-database-1"}},
+        ]
+        volumes = [
+            {"metadata": {"name": "pv-database-0"}, "spec": {"capacity": {"storage": "10Gi"}}},
+            {"metadata": {"name": "pv-database-1"}, "spec": {"capacity": {"storage": "10Gi"}}},
+        ]
+        baseline = {
+            "components": {
+                "database": {
+                    "persistentVolume.capacity.storage": expected(self.checker, "10240Mi", "memory", "D8"),
+                },
+            },
+            "expected_count": 1,
+        }
+        arguments = types.SimpleNamespace(
+            namespace="pramf01", ignore_extra="", extra_policy="warn", show_pass=True
+        )
+        original_workloads = self.checker.workload_snapshot
+        original_storage = self.checker.storage_snapshot
+        self.checker.workload_snapshot = lambda namespace: workloads
+        self.checker.storage_snapshot = lambda namespace: (claims, volumes)
+        try:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                stats = self.checker.audit(arguments, baseline, {})
+        finally:
+            self.checker.workload_snapshot = original_workloads
+            self.checker.storage_snapshot = original_storage
+
+        rendered = output.getvalue()
+        self.assertEqual(stats["passed"], 1)
+        self.assertEqual(stats["failures"], 0)
+        self.assertIn("expected=10240Mi", rendered)
+        self.assertIn("10Gi (pvc=data-database-0, pv=pv-database-0)", rendered)
+        self.assertIn("10Gi (pvc=data-database-1, pv=pv-database-1)", rendered)
+
+        volumes[1]["spec"]["capacity"]["storage"] = "20Gi"
+        self.checker.workload_snapshot = lambda namespace: workloads
+        self.checker.storage_snapshot = lambda namespace: (claims, volumes)
+        try:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                stats = self.checker.audit(arguments, baseline, {})
+        finally:
+            self.checker.workload_snapshot = original_workloads
+            self.checker.storage_snapshot = original_storage
+
+        self.assertEqual(stats["mismatch"], 1)
+        self.assertEqual(stats["failures"], 1)
+        self.assertIn("[FAIL] [MISMATCH]", output.getvalue())
+        self.assertIn("20Gi (pvc=data-database-1, pv=pv-database-1)", output.getvalue())
 
 
 if __name__ == "__main__":

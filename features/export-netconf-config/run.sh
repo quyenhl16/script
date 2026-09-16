@@ -110,10 +110,6 @@ check_export_target() {
       printf "ConfD directory is not writable: %s\n" "$1" >&2
       exit 22
     }
-    command -v tar >/dev/null 2>&1 || {
-      printf "tar is required in the container for kubectl cp\n" >&2
-      exit 23
-    }
   ' sh "$confd_dir" 2>&1)"; then
     fail "$selected_master: $output"
   fi
@@ -159,11 +155,16 @@ copy_export_local() {
   remote_path="$confd_dir/$remote_config_file"
   trap cleanup_export EXIT
 
-  local -a arguments=(-n "$namespace" cp "$selected_master:$remote_path" "$temporary_file")
-  if [[ -n "$container" ]]; then
-    arguments+=(-c "$container")
+  # kubectl cp transports files through a tar stream. Some minimal container
+  # images provide a tar implementation that produces a stream kubectl cannot
+  # decode ("tar contents corrupted"). Stream this single XML file directly;
+  # kubectl keeps command stdout byte-for-byte separate from stderr.
+  if ! kubectl_exec "$selected_master" sh -c '
+    cd "$1" || exit 20
+    exec cat "$2"
+  ' sh "$confd_dir" "$remote_config_file" >"$temporary_file"; then
+    fail "cannot copy $selected_master:$remote_path to $destination_config_file"
   fi
-  kubectl "${arguments[@]}" || fail "cannot copy $selected_master:$remote_path to $destination_config_file"
   [[ -s "$temporary_file" ]] || fail "copied XML configuration is empty"
   grep -Eq '<[^>]+>' "$temporary_file" || fail "copied file does not appear to contain XML"
   chmod 0600 "$temporary_file"
