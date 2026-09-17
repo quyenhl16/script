@@ -211,6 +211,7 @@ thống Kubernetes đã lên:
 3. k8s-resource-check    sau service-check
 4. k8s-env-check         sau resource-check
 5. k8s-connectivity-check sau env-check
+6. compare-xml-config    sau connectivity-check
 ```
 
 Trước khi chạy riêng feature hoặc chạy workflow, đặt file Excel baseline tại
@@ -220,6 +221,10 @@ thư mục gốc dự án:
 ```bash
 cp /path/to/pramf01-input_100K.xlsx pramf01-input_100K.xlsx
 ```
+
+Đồng thời cấu hình `source_xml` và `target_xml` trong
+`profiles/01HTX/compare-xml-config.json` tới hai file XML cần so sánh. Step
+`compare-xml-config` sử dụng `checks/xml/system-critical-paths.json` theo mặc định.
 
 Mở tab `5 Workflows`, chọn `post-deployment-validation` rồi nhấn `F5`; workflow
 chạy local và không yêu cầu server, user hoặc password SSH. Máy đang chạy
@@ -235,8 +240,8 @@ cần lặp lại `key=value` trong `workflow-configs/post-deployment-validation
 ### AMF system verification guide
 
 Profile `profiles/01HTX/amf-system-check-guide.json` chạy feature chỉ-đọc
-`amf-system-check-guide`. Guide tiếng Anh được hiển thị trong tab `Logs`, gồm ba
-phần: trước khi cài AMF CNF, sau khi cài AMF CNF và thông tin bổ sung.
+`amf-system-check-guide`. Guide song ngữ Anh-Việt được hiển thị trong tab `Logs`,
+gồm ba phần: trước khi cài AMF CNF, sau khi cài AMF CNF và thông tin bổ sung.
 
 ## TUI dashboard
 
@@ -271,7 +276,7 @@ Phím tắt:
 | `c` | Hủy plan đang chạy |
 | `F2` | Đổi giữa command, script và workflow trong Remote SSH |
 | `F3` | Nạp toàn bộ server và credential từ `base-server` của hệ thống hiện tại |
-| `F4` | Chuyển nhanh định dạng report giữa Markdown và HTML |
+| `F4` | Chuyển định dạng report giữa Markdown, HTML và Excel |
 | `F5` | Chạy SSH trên tất cả server đã nhập hoặc đã nạp |
 | `F6` | Bật hoặc tắt web server xem HTML report |
 | `?` | Hiện trợ giúp |
@@ -597,7 +602,7 @@ Các path nằm dưới XPath khai báo trong `system-critical-paths.json` có n
 ```
 
 Nếu có sai khác hoặc thiếu một critical rule bắt buộc, feature trả trạng thái
-failed và report Markdown/HTML vẫn được tạo đầy đủ. Feature chỉ cần `python3`,
+failed và report Markdown/HTML/Excel vẫn được tạo đầy đủ. Feature chỉ cần `python3`,
 không yêu cầu `xmllint`.
 
 ### Cập nhật AMF alarm mappings
@@ -631,7 +636,7 @@ Profile hỗ trợ các tham số:
 Mỗi request hiển thị tên pod, HTTP status và response body. Feature tiếp tục gửi
 các request còn lại khi một request lỗi, sau đó in tổng số `passed`/`failed` và
 trả trạng thái failed nếu có bất kỳ lỗi curl hoặc HTTP ngoài khoảng 2xx. Toàn bộ
-kết quả cũng được lưu trong report Markdown/HTML của lần chạy.
+kết quả cũng được lưu trong report Markdown/HTML/Excel của lần chạy.
 
 Khi build từ source cần Go 1.24 trở lên. Binary đã build vẫn có thể chạy độc lập trên server đích.
 
@@ -642,7 +647,7 @@ vẫn lưu text thuần. Đặt biến môi trường `NO_COLOR=1` để tắt m
 ## Report kết quả
 
 Mỗi lần thực thi feature, SSH command/script hoặc workflow sẽ tạo một report độc
-lập. Markdown là định dạng mặc định và có thể đọc trực tiếp trên server bằng
+lập ở định dạng Markdown, HTML hoặc Excel. Markdown là định dạng mặc định và có thể đọc trực tiếp trên server bằng
 `less` hoặc `vim`:
 
 ```bash
@@ -655,8 +660,10 @@ Report được tách theo định dạng rồi nhóm theo hệ thống:
 reports/
 ├── md/
 │   └── <system>/*.md
-└── html/
-    └── <system>/*.html
+├── html/
+│   └── <system>/*.html
+└── xlsx/
+    └── <system>/*.xlsx
 ```
 
 Mỗi file gồm trạng thái tổng, thời gian chạy, thống kê thành công/thất bại và
@@ -668,11 +675,17 @@ Chọn định dạng khi chạy CLI:
 ```bash
 syssetup run --profile profiles/01HTX/base-server.json --report-format md
 syssetup run --profile profiles/01HTX/base-server.json --report-format html
+syssetup run --profile profiles/01HTX/base-server.json --report-format xlsx
 ```
 
 Dùng `--reports-dir PATH` để đổi thư mục lưu. Trong TUI, định dạng hiện tại nằm
-ở góc phải header; nhấn `F4` để chuyển đơn giản giữa `MD` và `HTML`. Sau khi lệnh
+ở góc phải header; nhấn `F4` để chuyển tuần tự giữa `MD`, `HTML` và `XLSX`. Sau khi lệnh
 kết thúc, đường dẫn report được hiển thị trên thanh trạng thái.
+
+Với workflow, report Excel có sheet `Summary` chứa trạng thái tổng thể, thông tin
+system/profile, thời gian, thống kê và danh sách kết quả. Mỗi lần chạy feature trong
+workflow được ghi vào một sheet riêng với status, target, duration, message và output
+theo từng dòng. Tên sheet được chuẩn hóa theo giới hạn của Excel và không bị trùng.
 
 ### Web browser cho HTML report
 

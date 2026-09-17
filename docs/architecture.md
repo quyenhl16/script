@@ -55,7 +55,7 @@ Dependency luôn chạy trước feature phụ thuộc và chỉ xuất hiện m
 - `registry`: khám phá feature, validation và dependency resolution.
 - `platform`: nhận diện `/etc/os-release` và quyền root.
 - `runner`: timeout, process execution, output và log.
-- `report`: chuẩn hóa kết quả và sinh report Markdown hoặc HTML tự chứa sau mỗi
+- `report`: chuẩn hóa kết quả và sinh report Markdown, HTML tự chứa hoặc workbook Excel sau mỗi
   lần thực thi.
 - `workflow`: khám phá workflow, validate config, derive output-to-input và điều
   phối remote feature theo từng server.

@@ -143,7 +143,7 @@ func TestSSHFormMasksPasswordAndSwitchesMode(t *testing.T) {
 	}
 }
 
-func TestReportFormatDefaultsToMarkdownAndTogglesSimply(t *testing.T) {
+func TestReportFormatDefaultsToMarkdownAndCyclesThroughFormats(t *testing.T) {
 	root := t.TempDir()
 	writeDashboardFeature(t, root, "base", "")
 	reg, err := registry.Load(root)
@@ -159,8 +159,12 @@ func TestReportFormatDefaultsToMarkdownAndTogglesSimply(t *testing.T) {
 		t.Fatalf("toggled report format = %q, want html", m.reportFormat)
 	}
 	m.toggleReportFormat()
+	if m.reportFormat != "xlsx" {
+		t.Fatalf("second toggled report format = %q, want xlsx", m.reportFormat)
+	}
+	m.toggleReportFormat()
 	if m.reportFormat != "md" {
-		t.Fatalf("second toggled report format = %q, want md", m.reportFormat)
+		t.Fatalf("third toggled report format = %q, want md", m.reportFormat)
 	}
 }
 
@@ -182,6 +186,35 @@ func TestCompletedFeatureRunWritesSelectedReportFormat(t *testing.T) {
 	}
 	if len(matches) != 1 || !strings.Contains(m.notice, matches[0]) {
 		t.Fatalf("report files = %#v, notice = %q", matches, m.notice)
+	}
+}
+
+func TestCompletedWorkflowWritesOneExcelWorkbook(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "local-check", `,"workflowCompatible":true`)
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportsDir := t.TempDir()
+	profile := domain.Profile{APIVersion: "syssetup/v1", Name: "validation", System: "01HTX"}
+	m := newModel(context.Background(), reg, profile, runner.Options{ReportsDir: reportsDir, ReportFormat: "xlsx"})
+	m.activeWorkflow = workflow.Definition{ID: "local-validation", ExecutionMode: "local"}
+	m.remoteStartedAt = time.Now().Add(-time.Second)
+	m.Update(workflowFinishedMsg{execution: workflow.Execution{
+		Servers: []workflow.ServerResult{{Address: "local", Success: true}},
+		Results: []workflow.Result{{
+			Server: "local", StepID: "check", FeatureID: "local-check", Invocation: 1,
+			Status: workflow.StatusDone, Duration: time.Second, Output: "[PASS] local check",
+		}},
+	}})
+
+	matches, err := filepath.Glob(filepath.Join(reportsDir, "xlsx", "01HTX", "*.xlsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 || !strings.Contains(m.notice, matches[0]) {
+		t.Fatalf("workflow Excel reports = %#v, notice = %q", matches, m.notice)
 	}
 }
 

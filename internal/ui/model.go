@@ -1093,10 +1093,13 @@ func (m *model) toggleReportFormat() {
 		m.notice = "Wait for the current run before changing report format"
 		return
 	}
-	if m.reportFormat == runreport.HTML {
-		m.reportFormat = runreport.Markdown
-	} else {
+	switch m.reportFormat {
+	case runreport.Markdown:
 		m.reportFormat = runreport.HTML
+	case runreport.HTML:
+		m.reportFormat = runreport.Excel
+	default:
+		m.reportFormat = runreport.Markdown
 	}
 	m.options.ReportFormat = string(m.reportFormat)
 	m.notice = "Report format: " + strings.ToUpper(string(m.reportFormat))

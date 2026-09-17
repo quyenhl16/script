@@ -1,9 +1,9 @@
 {
   "apiVersion": "syssetup/v1",
   "id": "amf-system-check-guide",
-  "name": "AMF System Check Guide",
-  "version": "1.0.0",
-  "description": "Display a structured guide for AMF system verification before and after CNF installation",
+  "name": "AMF System Check Guide / Hướng dẫn kiểm tra hệ thống AMF",
+  "version": "1.1.0",
+  "description": "Display a bilingual English-Vietnamese guide for AMF system verification before and after CNF installation / Hiển thị hướng dẫn song ngữ Anh-Việt để kiểm tra hệ thống AMF trước và sau khi cài đặt CNF",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,

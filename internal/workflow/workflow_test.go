@@ -168,6 +168,7 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 		"k8s-resource-check",
 		"k8s-env-check",
 		"k8s-connectivity-check",
+		"compare-xml-config",
 	}
 	gotFeatures := make([]string, 0, len(definition.Steps))
 	for _, step := range definition.Steps {
@@ -203,6 +204,14 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 		!contains(connectivityInvocations[0].Args, "ip_nssf=") ||
 		!contains(connectivityInvocations[0].Args, "curl_nssf_urls=") {
 		t.Fatalf("optional NF parameters were not built from the connectivity profile: %#v", connectivityInvocations)
+	}
+	compareInvocations := config.Steps["xml-compare"]
+	if len(compareInvocations) != 1 ||
+		!contains(compareInvocations[0].Args, "source_xml=/path/to/source-config.xml") ||
+		!contains(compareInvocations[0].Args, "target_xml=/path/to/target-config.xml") ||
+		!contains(compareInvocations[0].Args, "rules_file=checks/xml/system-critical-paths.json") ||
+		!contains(compareInvocations[0].Args, "show_equal=false") {
+		t.Fatalf("xml-compare was not built from its profile: %#v", compareInvocations)
 	}
 }
 

@@ -470,7 +470,7 @@ func (m *model) helpView() string {
 		keyStyle.Render("r") + "               Execute the current plan",
 		keyStyle.Render("c") + "               Cancel the running plan",
 		keyStyle.Render("F2 / F3 / F5") + "    SSH mode / load base-server / run",
-		keyStyle.Render("F4") + "              Toggle Markdown / HTML report",
+		keyStyle.Render("F4") + "              Cycle Markdown / HTML / Excel report",
 		keyStyle.Render("F6") + "              Start / stop HTML report web server",
 		keyStyle.Render("? / esc") + "         Close this help",
 		keyStyle.Render("q / ctrl+c") + "      Quit",

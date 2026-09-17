@@ -158,6 +158,27 @@ func TestBundledAMFSystemCheckGuideIsLocal(t *testing.T) {
 	if len(resolved) != 1 || resolved[0].Feature.RemoteOnly || resolved[0].Feature.RequireRoot {
 		t.Fatalf("AMF guide must be an unprivileged local feature: %#v", resolved)
 	}
+	feature := resolved[0].Feature
+	if !strings.Contains(feature.Name, "Hướng dẫn kiểm tra hệ thống AMF") ||
+		!strings.Contains(feature.Description, "song ngữ Anh-Việt") {
+		t.Fatalf("AMF guide metadata must describe Vietnamese support: %#v", feature)
+	}
+	content, err := os.ReadFile(filepath.Join(feature.Directory, feature.Entrypoint))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide := string(content)
+	for _, expected := range []string{
+		"HƯỚNG DẪN KIỂM TRA HỆ THỐNG AMF",
+		"TRƯỚC KHI CÀI ĐẶT AMF CNF",
+		"SAU KHI CÀI ĐẶT AMF CNF",
+		"THÔNG TIN BỔ SUNG",
+		"Note / Lưu ý:",
+	} {
+		if !strings.Contains(guide, expected) {
+			t.Errorf("AMF guide is missing bilingual content %q", expected)
+		}
+	}
 }
 
 func TestBundledLoadNetConfConfigIsLocal(t *testing.T) {

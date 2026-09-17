@@ -52,7 +52,7 @@ func run(ctx context.Context, args []string) error {
 	profilePath := flags.String("profile", filepath.Join("profiles", "01HTX", "base-server.json"), "profile JSON file")
 	dryRun := flags.Bool("dry-run", false, "show execution plan without changing the system")
 	logPath := flags.String("log", "syssetup.log", "execution log file")
-	reportFormatValue := flags.String("report-format", envOrDefault("SYSSETUP_REPORT_FORMAT", "md"), "report format: md or html")
+	reportFormatValue := flags.String("report-format", envOrDefault("SYSSETUP_REPORT_FORMAT", "md"), "report format: md, html, or xlsx")
 	reportsDir := flags.String("reports-dir", envOrDefault("SYSSETUP_REPORTS_DIR", "reports"), "directory for generated reports")
 	reportListen := flags.String("report-listen", envOrDefault("SYSSETUP_REPORT_LISTEN", "127.0.0.1:8080"), "TUI report web server listen address")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -238,7 +238,7 @@ Usage:
   syssetup workflows [--features-dir PATH] [--workflows-dir PATH]
   syssetup reports serve [--listen ADDRESS] [--reports-dir PATH]
   syssetup plan [--profile PATH]
-  syssetup run  [--profile PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH]
-  syssetup tui  [--profile PATH] [--profiles-dir PATH] [--workflows-dir PATH] [--dry-run] [--log PATH] [--report-format md|html] [--reports-dir PATH] [--report-listen ADDRESS]
+  syssetup run  [--profile PATH] [--dry-run] [--log PATH] [--report-format md|html|xlsx] [--reports-dir PATH]
+  syssetup tui  [--profile PATH] [--profiles-dir PATH] [--workflows-dir PATH] [--dry-run] [--log PATH] [--report-format md|html|xlsx] [--reports-dir PATH] [--report-listen ADDRESS]
   syssetup version`)
 }

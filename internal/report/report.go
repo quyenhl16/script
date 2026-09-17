@@ -17,6 +17,7 @@ type Format string
 const (
 	Markdown Format = "md"
 	HTML     Format = "html"
+	Excel    Format = "xlsx"
 )
 
 type SummaryItem struct {
@@ -57,16 +58,22 @@ func ParseFormat(value string) (Format, error) {
 		return Markdown, nil
 	case HTML:
 		return HTML, nil
+	case Excel:
+		return Excel, nil
 	default:
-		return "", fmt.Errorf("unsupported report format %q; expected md or html", value)
+		return "", fmt.Errorf("unsupported report format %q; expected md, html, or xlsx", value)
 	}
 }
 
 func (f Format) Extension() string {
-	if f == HTML {
+	switch f {
+	case HTML:
 		return ".html"
+	case Excel:
+		return ".xlsx"
+	default:
+		return ".md"
 	}
-	return ".md"
 }
 
 func Write(document Document, options Options) (string, error) {
@@ -104,9 +111,12 @@ func Write(document Document, options Options) (string, error) {
 	baseName := document.FinishedAt.Format("20060102_150405.000") + "_" + operation
 
 	var content []byte
-	if format == HTML {
+	switch format {
+	case HTML:
 		content, err = renderHTML(document)
-	} else {
+	case Excel:
+		content, err = renderExcel(document)
+	default:
 		content = []byte(renderMarkdown(document))
 	}
 	if err != nil {

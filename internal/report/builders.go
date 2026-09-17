@@ -96,8 +96,10 @@ func WorkflowRun(profile domain.Profile, definition workflow.Definition, executi
 			passedServers++
 		}
 	}
+	resultCounts := make(map[workflow.Status]int)
 	entries := make([]Entry, 0, len(execution.Results))
 	for _, result := range execution.Results {
+		resultCounts[result.Status]++
 		invocation := ""
 		if result.Invocation > 0 {
 			invocation = fmt.Sprintf(".%d", result.Invocation)
@@ -124,9 +126,12 @@ func WorkflowRun(profile domain.Profile, definition workflow.Definition, executi
 		StartedAt: started, FinishedAt: finished,
 		Summary: []SummaryItem{
 			{Label: targetLabel, Value: fmt.Sprint(len(execution.Servers))},
-			{Label: "Passed", Value: fmt.Sprint(passedServers)},
-			{Label: "Failed", Value: fmt.Sprint(len(execution.Servers) - passedServers)},
-			{Label: "Steps", Value: fmt.Sprint(len(execution.Results))},
+			{Label: "Passed targets", Value: fmt.Sprint(passedServers)},
+			{Label: "Failed targets", Value: fmt.Sprint(len(execution.Servers) - passedServers)},
+			{Label: "Feature executions", Value: fmt.Sprint(len(execution.Results))},
+			{Label: "Done executions", Value: fmt.Sprint(resultCounts[workflow.StatusDone])},
+			{Label: "Failed executions", Value: fmt.Sprint(resultCounts[workflow.StatusFailed])},
+			{Label: "Skipped executions", Value: fmt.Sprint(resultCounts[workflow.StatusSkipped])},
 		},
 		Entries: entries,
 	}

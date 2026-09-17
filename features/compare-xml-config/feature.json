@@ -7,6 +7,7 @@
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
+  "workflowCompatible": true,
   "timeoutSeconds": 120,
   "parameters": {
     "source_xml": {

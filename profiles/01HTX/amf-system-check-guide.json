@@ -1,7 +1,7 @@
 {
   "apiVersion": "syssetup/v1",
   "name": "amf-system-check-guide",
-  "description": "Display the AMF system verification guide",
+  "description": "Display the bilingual AMF system verification guide / Hiển thị hướng dẫn song ngữ kiểm tra hệ thống AMF",
   "features": [
     {
       "id": "amf-system-check-guide"
