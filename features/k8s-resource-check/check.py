@@ -481,14 +481,29 @@ def flatten_resources(container, scope):
 def workload_persistent_volumes(workload, claims, volumes):
     workload_name = workload.get("metadata", {}).get("name", "")
     claim_names = set()
+    claim_templates = []
+    template_names = set()
+    if workload.get("kind", "").lower() == "statefulset":
+        claim_templates = workload.get("spec", {}).get("volumeClaimTemplates", []) or []
+        template_names = {
+            template.get("metadata", {}).get("name", "")
+            for template in claim_templates
+            if template.get("metadata", {}).get("name", "")
+        }
+
     pod_spec = workload.get("spec", {}).get("template", {}).get("spec", {}) or {}
     for volume in pod_spec.get("volumes", []) or []:
+        # A StatefulSet volumeClaimTemplate takes precedence over a pod-template
+        # volume with the same name. In that case claimName is not a standalone
+        # PVC; the controller creates one PVC per replica instead.
+        if volume.get("name", "") in template_names:
+            continue
         claim_name = (volume.get("persistentVolumeClaim") or {}).get("claimName")
         if claim_name:
             claim_names.add(claim_name)
 
-    if workload.get("kind", "").lower() == "statefulset":
-        for template in workload.get("spec", {}).get("volumeClaimTemplates", []) or []:
+    if claim_templates:
+        for template in claim_templates:
             template_name = template.get("metadata", {}).get("name", "")
             prefix = "{}-{}-".format(template_name, workload_name)
             if template_name and workload_name:

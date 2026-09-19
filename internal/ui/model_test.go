@@ -359,6 +359,43 @@ func TestSSHDoesNotLoadBaseProfileFromAnotherSystem(t *testing.T) {
 	}
 }
 
+func TestWorkflowServersPreferMatchingProfileAndFallBackToBase(t *testing.T) {
+	root := t.TempDir()
+	writeDashboardFeature(t, root, "base", "")
+	reg, err := registry.Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active := domain.Profile{APIVersion: "syssetup/v1", Name: "operator", System: "01HTX"}
+	m := newModel(context.Background(), reg, active, runner.Options{})
+	m.profiles = []domain.Profile{
+		{Name: "deploy", System: "02HCM", RemoteServers: []domain.RemoteServer{{IP: "10.0.2.1", Username: "other", Password: "other"}}},
+		{Name: "base-server", System: "01HTX", RemoteServers: []domain.RemoteServer{{IP: "10.0.0.1", Username: "base", Password: "base"}}},
+		{Name: "deploy", System: "01HTX", RemoteServers: []domain.RemoteServer{{IP: "10.0.1.1", Username: "deploy", Password: "deploy"}}},
+	}
+	m.sshMode = sshWorkflow
+	m.activeWorkflow = workflow.Definition{ID: "deploy"}
+	m.sshInputs[sshHosts].SetValue("192.0.2.1")
+	m.loadRemoteServers()
+	servers, err := m.sshServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.serverSource != "01HTX/deploy" || len(servers) != 1 || servers[0].Address != "10.0.1.1:22" || m.sshInputs[sshHosts].Value() != "" {
+		t.Fatalf("workflow servers = %#v, source = %q", servers, m.serverSource)
+	}
+
+	m.activeWorkflow.ID = "unknown"
+	m.loadRemoteServers()
+	servers, err = m.sshServers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.serverSource != "01HTX/base-server" || len(servers) != 1 || servers[0].Address != "10.0.0.1:22" {
+		t.Fatalf("fallback servers = %#v, source = %q", servers, m.serverSource)
+	}
+}
+
 func TestRemoteFeatureOpensSSHScriptForm(t *testing.T) {
 	root := t.TempDir()
 	writeDashboardFeature(t, root, "create-bond-vlan", `,"remoteOnly":true,"requireRoot":true`)

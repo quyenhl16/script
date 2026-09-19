@@ -1,3 +1,6 @@
+
+
+
 import contextlib
 from decimal import Decimal
 import importlib.util
@@ -260,7 +263,15 @@ class AuditTests(unittest.TestCase):
             "kind": "StatefulSet",
             "metadata": {"name": "database", "labels": {}},
             "spec": {
-                "template": {"spec": {"containers": [{"name": "database", "resources": {}}]}},
+                "template": {
+                    "spec": {
+                        "containers": [{"name": "database", "resources": {}}],
+                        "volumes": [{
+                            "name": "data",
+                            "persistentVolumeClaim": {"claimName": "data"},
+                        }],
+                    },
+                },
                 "volumeClaimTemplates": [{"metadata": {"name": "data"}}],
             },
         }]
@@ -301,6 +312,7 @@ class AuditTests(unittest.TestCase):
         self.assertIn("expected=10240Mi", rendered)
         self.assertIn("10Gi (pvc=data-database-0, pv=pv-database-0)", rendered)
         self.assertIn("10Gi (pvc=data-database-1, pv=pv-database-1)", rendered)
+        self.assertNotIn("data (PVC was not found)", rendered)
 
         volumes[1]["spec"]["capacity"]["storage"] = "20Gi"
         self.checker.workload_snapshot = lambda namespace: workloads

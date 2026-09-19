@@ -555,7 +555,7 @@ func (m *model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "f3":
 		if m.activeTab == tabSSH && !m.remoteRunning {
-			m.loadBaseServers()
+			m.loadRemoteServers()
 		}
 		return m, nil
 	case "f4":
@@ -661,6 +661,8 @@ func (m *model) handleSSHInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !m.remoteRunning {
 			if m.sshMode == sshWorkflow && m.activeWorkflow.ExecutionMode == "local" {
 				m.notice = "Local workflow does not require SSH servers"
+			} else if m.sshMode == sshWorkflow && m.activeWorkflow.ID != "" {
+				m.notice = m.loadWorkflowServers(m.activeWorkflow.ID)
 			} else {
 				m.loadBaseServers()
 			}
@@ -901,8 +903,61 @@ func (m *model) loadCurrentWorkflow() tea.Cmd {
 	m.activeWorkflow = definition
 	m.sshInputs[sshWorkflowConfig].SetValue(filepath.Join("workflow-configs", id+".json"))
 	m.activeTab = tabSSH
-	m.notice = fmt.Sprintf("Workflow %s loaded; review config and press F5", id)
+	notice := fmt.Sprintf("Workflow %s loaded; review config and press F5", id)
+	if definition.ExecutionMode != "local" {
+		if serverNotice := m.loadWorkflowServers(id); serverNotice != "" {
+			notice += "; " + serverNotice
+		}
+	}
+	m.notice = notice
 	return m.focusSSH(sshWorkflowConfig)
+}
+func (m *model) loadWorkflowServers(id string) string {
+	servers, source, err := m.workflowServers(id)
+	if err != nil {
+		m.profileServers = nil
+		m.serverSource = ""
+		m.remoteErr = err
+		return "SSH: " + err.Error()
+	}
+	m.profileServers = servers
+	m.serverSource = source
+	m.sshInputs[sshHosts].SetValue("")
+	m.sshInputs[sshUser].SetValue("")
+	m.sshInputs[sshPassword].SetValue("")
+	m.remoteErr = nil
+	return fmt.Sprintf("Loaded %d remote server(s) from %s", len(servers), m.serverSource)
+}
+
+// workflowServers returns the remote servers a workflow run should target.
+// A profile named after the workflow (e.g. workflows/ems-checklist uses
+// profiles/<system>/ems-checklist.json) scopes the run to the servers that
+// profile declares; otherwise the system's base-server is used as before.
+func (m *model) workflowServers(id string) ([]remote.Server, string, error) {
+	if profile, found := m.profileByName(id); found && len(profile.RemoteServers) > 0 {
+		servers, err := remoteServersFromProfile(profile)
+		return servers, profileLabel(profile), err
+	}
+	base, found := m.baseServerProfile()
+	if !found {
+		return nil, "", errors.New("base-server profile is not available for the current system")
+	}
+	servers, err := remoteServersFromProfile(base)
+	return servers, profileLabel(base), err
+}
+
+// profileByName finds a profile of the active system by exact name,
+// mirroring how baseServerProfile resolves the base-server profile.
+func (m *model) profileByName(name string) (domain.Profile, bool) {
+	if strings.EqualFold(m.profile.Name, name) && len(m.profile.RemoteServers) > 0 {
+		return m.profile, true
+	}
+	for _, profile := range m.profiles {
+		if strings.EqualFold(profile.System, m.profile.System) && strings.EqualFold(profile.Name, name) && len(profile.RemoteServers) > 0 {
+			return profile, true
+		}
+	}
+	return domain.Profile{}, false
 }
 
 func (m *model) loadCurrentProfile() {
@@ -931,6 +986,18 @@ func (m *model) loadCurrentProfile() {
 	m.activeTab = tabFeatures
 }
 
+// loadRemoteServers loads the servers for the active SSH mode: in workflow
+// mode (non-local execution) a profile named after the workflow scopes the
+// run; otherwise the system's base-server list is loaded as before.
+func (m *model) loadRemoteServers() {
+	if m.sshMode == sshWorkflow && m.activeWorkflow.ID != "" && m.activeWorkflow.ExecutionMode != "local" {
+		if notice := m.loadWorkflowServers(m.activeWorkflow.ID); notice != "" {
+			m.notice = notice
+		}
+		return
+	}
+	m.loadBaseServers()
+}
 func (m *model) loadBaseServers() {
 	profile, found := m.baseServerProfile()
 	if !found {
