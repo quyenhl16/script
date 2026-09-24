@@ -84,8 +84,8 @@ func buildExcelSheets(document Document) []excelSheet {
 
 func buildExcelSummary(document Document, entrySheets []string) excelSheet {
 	sheet := excelSheet{
-		name: "Summary", columns: []float64{24, 48, 24, 16, 18, 64}, freezeRows: 1,
-		merges: []string{"A1:F1"},
+		name: "Summary", columns: []float64{24, 42, 24, 14, 12, 12, 12, 12, 12, 18, 56}, freezeRows: 1,
+		merges: []string{"A1:K1"},
 	}
 	sheet.rows = append(sheet.rows,
 		excelRow{index: 1, height: 28, cells: []excelCell{{column: 1, value: document.Title, style: 1}}},
@@ -115,58 +115,126 @@ func buildExcelSummary(document Document, entrySheets []string) excelSheet {
 	tableHeader := row
 	sheet.rows = append(sheet.rows, excelRow{index: row, height: 24, cells: []excelCell{
 		{1, "Sheet", 5, false}, {2, "Feature / Step", 5, false}, {3, "Target", 5, false},
-		{4, "Status", 5, false}, {5, "Duration", 5, false}, {6, "Message", 5, false},
+		{4, "Status", 5, false}, {5, "Checks", 5, false}, {6, "Pass", 5, false},
+		{7, "Fail", 5, false}, {8, "Skip", 5, false}, {9, "Warn", 5, false},
+		{10, "Duration", 5, false}, {11, "Message", 5, false},
 	}})
 	row++
 	for index, entry := range document.Entries {
+		checklist := parseChecklistOutput(entry.Output)
+		total := checklist.Counts["PASS"] + checklist.Counts["FAIL"] + checklist.Counts["SKIP"] + checklist.Counts["WARN"]
 		sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{
 			{1, entrySheets[index], 4, false}, {2, entry.Title, 4, false}, {3, valueOrDash(entry.Target), 4, false},
-			{4, entry.Status, excelStatusStyle(entry.Status), false}, {5, excelDurationValue(entry.Duration), 11, true},
-			{6, excelCellText(entry.Message), 4, false},
+			{4, normalizeChecklistStatus(entry.Status), excelStatusStyle(entry.Status), false},
+			{5, strconv.Itoa(total), 12, true}, {6, strconv.Itoa(checklist.Counts["PASS"]), 12, true},
+			{7, strconv.Itoa(checklist.Counts["FAIL"]), 12, true}, {8, strconv.Itoa(checklist.Counts["SKIP"]), 12, true},
+			{9, strconv.Itoa(checklist.Counts["WARN"]), 12, true}, {10, excelDurationValue(entry.Duration), 11, true},
+			{11, excelCellText(entry.Message), 4, false},
 		}})
 		row++
 	}
 	if len(document.Entries) > 0 {
-		sheet.autoFilter = fmt.Sprintf("A%d:F%d", tableHeader, row-1)
+		sheet.autoFilter = fmt.Sprintf("A%d:K%d", tableHeader, row-1)
 	}
 	return sheet
 }
 
 func buildExcelEntry(entry Entry, name string) excelSheet {
+	checklist := parseChecklistOutput(entry.Output)
 	sheet := excelSheet{
-		name: name, columns: []float64{10, 120}, freezeRows: 9,
-		merges: []string{"A1:B1", "A8:B8"}, autoFilter: "A9:B9",
+		name: name, columns: []float64{12, 38, 13, 24, 24, 20, 56}, freezeRows: 9,
+		merges: []string{"A1:G1", "B4:G4", "A6:G6"},
 	}
+	total := checklist.Counts["PASS"] + checklist.Counts["FAIL"] + checklist.Counts["SKIP"] + checklist.Counts["WARN"]
 	sheet.rows = append(sheet.rows,
 		excelRow{index: 1, height: 28, cells: []excelCell{{1, entry.Title, 1, false}}},
-		excelRow{index: 3, cells: []excelCell{{1, "Status", 3, false}, {2, entry.Status, excelStatusStyle(entry.Status), false}}},
-		excelRow{index: 4, cells: []excelCell{{1, "Target", 3, false}, {2, valueOrDash(entry.Target), 4, false}}},
-		excelRow{index: 5, cells: []excelCell{{1, "Duration", 3, false}, {2, excelDurationValue(entry.Duration), 11, true}}},
-		excelRow{index: 6, cells: []excelCell{{1, "Message", 3, false}, {2, excelCellText(entry.Message), 4, false}}},
-		excelRow{index: 8, height: 22, cells: []excelCell{{1, "Execution output", 2, false}}},
-		excelRow{index: 9, height: 24, cells: []excelCell{{1, "Line", 5, false}, {2, "Output", 5, false}}},
+		excelRow{index: 3, cells: []excelCell{
+			{1, "Status", 3, false}, {2, normalizeChecklistStatus(entry.Status), excelStatusStyle(entry.Status), false},
+			{3, "Target", 3, false}, {4, valueOrDash(entry.Target), 4, false},
+			{5, "Duration", 3, false}, {6, excelDurationValue(entry.Duration), 11, true},
+		}},
+		excelRow{index: 4, cells: []excelCell{{1, "Message", 3, false}, {2, excelCellText(entry.Message), 4, false}}},
+		excelRow{index: 6, height: 22, cells: []excelCell{{1, "Checklist summary", 2, false}}},
+		excelRow{index: 7, cells: []excelCell{
+			{1, "Checks", 3, false}, {2, strconv.Itoa(total), 4, false},
+			{3, "Pass", 3, false}, {4, strconv.Itoa(checklist.Counts["PASS"]), 6, false},
+			{5, "Fail", 3, false}, {6, strconv.Itoa(checklist.Counts["FAIL"]), 7, false},
+		}},
+		excelRow{index: 8, cells: []excelCell{
+			{1, "Skip", 3, false}, {2, strconv.Itoa(checklist.Counts["SKIP"]), 8, false},
+			{3, "Warn", 3, false}, {4, strconv.Itoa(checklist.Counts["WARN"]), 15, false},
+			{5, "Messages", 3, false}, {6, strconv.Itoa(len(checklist.Messages)), 4, false},
+		}},
 	)
-	lines := strings.Split(entry.Output, "\n")
-	if entry.Output == "" {
-		lines = []string{"(no output)"}
-	}
-	limit := excelMaxRows - 9
-	truncated := len(lines) > limit
-	if truncated {
-		lines = lines[:limit]
-	}
-	for index, line := range lines {
-		if truncated && index == len(lines)-1 {
-			line = "[Output truncated because the Excel worksheet row limit was reached]"
+
+	row := 10
+	for _, section := range checklist.Sections {
+		if row+2 >= excelMaxRows {
+			break
 		}
-		sheet.rows = append(sheet.rows, excelRow{index: index + 10, cells: []excelCell{
-			{1, strconv.Itoa(index + 1), 9, true}, {2, excelCellText(line), 4, false},
+		sectionCounts := countChecklistItems(section.Items)
+		sheet.rows = append(sheet.rows, excelRow{index: row, height: 22, cells: []excelCell{
+			{1, section.Title, 13, false}, {4, "PASS: " + strconv.Itoa(sectionCounts["PASS"]), 6, false},
+			{5, "FAIL: " + strconv.Itoa(sectionCounts["FAIL"]), 7, false},
+			{6, "SKIP: " + strconv.Itoa(sectionCounts["SKIP"]), 8, false},
+			{7, "WARN: " + strconv.Itoa(sectionCounts["WARN"]), 15, false},
 		}})
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:C%d", row, row))
+		row++
+		sheet.rows = append(sheet.rows, excelRow{index: row, height: 24, cells: checklistTableHeader()})
+		row++
+		for index, item := range section.Items {
+			if row >= excelMaxRows {
+				break
+			}
+			comparisonStyle := 4
+			if item.Status == "FAIL" && (item.Expected != "" || item.Actual != "") {
+				comparisonStyle = 16
+			}
+			sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{
+				{1, strconv.Itoa(index + 1), 14, true}, {2, excelCellText(item.Check), 4, false},
+				{3, item.Status, excelStatusStyle(item.Status), false},
+				{4, excelCellText(item.Expected), comparisonStyle, false}, {5, excelCellText(item.Actual), comparisonStyle, false},
+				{6, excelCellText(item.Source), 4, false}, {7, excelCellText(item.Details), 4, false},
+			}})
+			row++
+		}
+		row++
 	}
-	if len(lines) > 0 {
-		sheet.autoFilter = fmt.Sprintf("A9:B%d", len(lines)+9)
+	if len(checklist.Messages) > 0 && row+1 < excelMaxRows {
+		sheet.rows = append(sheet.rows, excelRow{index: row, height: 22, cells: []excelCell{{1, "Additional messages", 13, false}}})
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:G%d", row, row))
+		row++
+		for _, message := range checklist.Messages {
+			if row >= excelMaxRows {
+				break
+			}
+			sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{{1, excelCellText(message), 4, false}}})
+			sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:G%d", row, row))
+			row++
+		}
+	}
+	if len(checklist.Sections) == 0 && len(checklist.Messages) == 0 {
+		sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{{1, "No checklist output", 4, false}}})
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:G%d", row, row))
 	}
 	return sheet
+}
+
+func checklistTableHeader() []excelCell {
+	return []excelCell{
+		{1, "#", 5, false}, {2, "Check", 5, false}, {3, "Status", 5, false},
+		{4, "Expected", 5, false}, {5, "Actual", 5, false}, {6, "Source", 5, false},
+		{7, "Details", 5, false},
+	}
+}
+
+func countChecklistItems(items []checklistItem) map[string]int {
+	counts := map[string]int{"PASS": 0, "FAIL": 0, "SKIP": 0, "WARN": 0}
+	for _, item := range items {
+		counts[item.Status]++
+	}
+	return counts
 }
 
 func excelSheetNames(entries []Entry) []string {
@@ -240,13 +308,15 @@ func excelDurationValue(value time.Duration) string {
 }
 
 func excelStatusStyle(status string) int {
-	switch strings.ToUpper(status) {
+	switch normalizeChecklistStatus(status) {
 	case "PASS", "DONE":
 		return 6
 	case "FAIL", "FAILED", "CANCELLED":
 		return 7
-	case "PARTIAL", "SKIPPED", "PLANNED":
+	case "SKIP", "SKIPPED", "PLANNED":
 		return 8
+	case "WARN", "PARTIAL":
+		return 15
 	default:
 		return 4
 	}
@@ -375,9 +445,9 @@ const excelStyles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
 <numFmts count="2"><numFmt numFmtId="164" formatCode="yyyy-mm-dd hh:mm:ss"/><numFmt numFmtId="165" formatCode="[h]:mm:ss.000"/></numFmts>
 <fonts count="4"><font><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="16"/><name val="Calibri"/></font><font><b/><color rgb="FFFFFFFF"/><sz val="11"/><name val="Calibri"/></font><font><b/><color rgb="FF17324D"/><sz val="11"/><name val="Calibri"/></font></fonts>
-<fills count="8"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF103B69"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF08758B"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8F0F8"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDDF3E4"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFCE8E6"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF1C2"/><bgColor indexed="64"/></patternFill></fill></fills>
+<fills count="9"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF103B69"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FF08758B"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFE8F0F8"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFDDF3E4"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFCE8E6"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFF1C2"/><bgColor indexed="64"/></patternFill></fill><fill><patternFill patternType="solid"><fgColor rgb="FFFFE0B2"/><bgColor indexed="64"/></patternFill></fill></fills>
 <borders count="2"><border><left/><right/><top/><bottom/><diagonal/></border><border><left/><right/><top/><bottom style="thin"><color rgb="FFD5DEE8"/></bottom><diagonal/></border></borders>
 <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
-<cellXfs count="13"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/><xf numFmtId="1" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/></cellXfs>
+<cellXfs count="17"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="2" borderId="0" xfId="0" applyFont="1" applyFill="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="0" fontId="2" fillId="3" borderId="0" xfId="0" applyFont="1" applyFill="1"/><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf><xf numFmtId="0" fontId="2" fillId="2" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="5" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="6" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="7" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="0" borderId="1" xfId="0" applyBorder="1" applyAlignment="1"><alignment horizontal="right"/></xf><xf numFmtId="164" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/><xf numFmtId="165" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/><xf numFmtId="1" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1"/><xf numFmtId="0" fontId="3" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf><xf numFmtId="1" fontId="0" fillId="0" borderId="1" xfId="0" applyNumberFormat="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center"/></xf><xf numFmtId="0" fontId="3" fillId="8" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1"/><xf numFmtId="0" fontId="0" fillId="6" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf></cellXfs>
 <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles><dxfs count="0"/><tableStyles count="0" defaultTableStyle="TableStyleMedium2" defaultPivotStyle="PivotStyleLight16"/>
 </styleSheet>`

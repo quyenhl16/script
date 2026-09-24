@@ -105,10 +105,73 @@ func TestExcelWorkflowReportHasSummaryAndOneSheetPerFeatureResult(t *testing.T) 
 	allXML := readExcelXML(t, content)
 	for _, expected := range []string{
 		`name="Summary"`, `name="01-k8s-env-check"`, `name="02-k8s-resource-check"`,
-		"SYSSETUP WORKFLOW REPORT", "Summary metrics", "[PASS] namespace", "[FAIL] memory limit",
+		"SYSSETUP WORKFLOW REPORT", "Summary metrics", "Checklist summary", "Check", "Status",
+		"Expected", "Actual", "namespace", "memory limit",
 	} {
 		if !strings.Contains(allXML, expected) {
 			t.Errorf("Excel report does not contain %q", expected)
+		}
+	}
+	if strings.Contains(allXML, ">Output<") || strings.Contains(allXML, ">Line<") {
+		t.Error("Excel checklist sheets still use the raw Line / Output layout")
+	}
+}
+
+func TestParseChecklistOutputGroupsChecksAndComparisonValues(t *testing.T) {
+	output := `=========================================================
+KUBERNETES SERVICE CHECK: namespace [pramf01]
+=========================================================
+
+Checking service: aerospike
+[PASS] Service [aerospike] exists (ClusterIP: None, External: None)
+[PASS] Service [aerospike]: External IP matches expected=[192.168.5.90]
+[PASS] Service [aerospike]: TCP 172.16.118.178:3000 is reachable (curl)
+
+Checking service: dns
+[SKIP] Service [dns] has no TCP port
+[FAIL] [MISMATCH] dns/limits.memory expected=4Gi actual=2Gi source=Resources!H16`
+
+	parsed := parseChecklistOutput(output)
+	if len(parsed.Sections) != 3 {
+		t.Fatalf("section count = %d, want 3: %#v", len(parsed.Sections), parsed.Sections)
+	}
+	for status, expected := range map[string]int{"PASS": 3, "FAIL": 1, "SKIP": 1, "WARN": 0} {
+		if parsed.Counts[status] != expected {
+			t.Errorf("count[%s] = %d, want %d", status, parsed.Counts[status], expected)
+		}
+	}
+	first := parsed.Sections[0]
+	if first.Title != "Service: aerospike" || len(first.Items) != 3 {
+		t.Fatalf("first section = %#v", first)
+	}
+	if first.Items[0].Check != "Exists" || first.Items[0].Expected != "Exists" || first.Items[0].Actual != "Exists" {
+		t.Errorf("exists check = %#v", first.Items[0])
+	}
+	if first.Items[1].Expected != "192.168.5.90" || first.Items[1].Actual != "192.168.5.90" {
+		t.Errorf("external IP check = %#v", first.Items[1])
+	}
+	if len(parsed.Messages) != 0 {
+		t.Errorf("unexpected additional messages: %#v", parsed.Messages)
+	}
+	comparison := parsed.Sections[2].Items[0]
+	if comparison.Check != "limits.memory" || comparison.Expected != "4Gi" || comparison.Actual != "2Gi" || comparison.Source != "Resources!H16" {
+		t.Errorf("comparison check = %#v", comparison)
+	}
+}
+
+func TestExcelChecklistReportContainsStructuredSectionsAndCounts(t *testing.T) {
+	document := Document{Entries: []Entry{{
+		Title: "services - k8s-service-check", Status: "done",
+		Output: "Checking service: dns\n[PASS] Service [dns] exists (ClusterIP: 10.0.0.1)\n[SKIP] Service [dns] has no TCP port",
+	}}}
+	content, err := renderExcel(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allXML := readExcelXML(t, content)
+	for _, expected := range []string{"Service: dns", "Checklist summary", "Checks", "Pass", "Fail", "Skip", "PASS: 1", "SKIP: 1", "Expected", "Actual", "Exists", "TCP port", "Not configured"} {
+		if !strings.Contains(allXML, expected) {
+			t.Errorf("structured Excel report does not contain %q", expected)
 		}
 	}
 }

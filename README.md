@@ -683,9 +683,12 @@ Dùng `--reports-dir PATH` để đổi thư mục lưu. Trong TUI, định dạ
 kết thúc, đường dẫn report được hiển thị trên thanh trạng thái.
 
 Với workflow, report Excel có sheet `Summary` chứa trạng thái tổng thể, thông tin
-system/profile, thời gian, thống kê và danh sách kết quả. Mỗi lần chạy feature trong
-workflow được ghi vào một sheet riêng với status, target, duration, message và output
-theo từng dòng. Tên sheet được chuẩn hóa theo giới hạn của Excel và không bị trùng.
+system/profile, thời gian và số lượng checklist `PASS`, `FAIL`, `SKIP`, `WARN`. Mỗi lần
+chạy feature trong workflow vẫn được ghi vào một sheet riêng. Nội dung của sheet được
+chia thành các nhóm kiểm tra và bảng checklist gồm `Check`, `Status`, `Expected`,
+`Actual`, `Source`, `Details`; các cột so sánh được điền khi output có dữ liệu tương ứng.
+Những dòng không thể chuyển thành checklist được giữ ở phần `Additional messages`.
+Tên sheet được chuẩn hóa theo giới hạn của Excel và không bị trùng.
 
 ### Web browser cho HTML report
 
