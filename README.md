@@ -206,12 +206,11 @@ Workflow `post-deployment-validation` chạy tuần tự trên máy local sau kh
 thống Kubernetes đã lên:
 
 ```text
-1. check-os              kiểm tra OS và dependency
-2. k8s-service-check     sau check-os
-3. k8s-resource-check    sau service-check
-4. k8s-env-check         sau resource-check
-5. k8s-connectivity-check sau env-check
-6. compare-xml-config    sau connectivity-check
+1. k8s-service-check      kiểm tra service Kubernetes
+2. k8s-resource-check     sau service-check
+3. k8s-env-check          sau resource-check
+4. k8s-connectivity-check sau env-check
+5. compare-xml-config     sau connectivity-check
 ```
 
 Trước khi chạy riêng feature hoặc chạy workflow, đặt file Excel baseline tại
@@ -767,7 +766,6 @@ Manifest mẫu:
   "requireRoot": false,
   "workflowCompatible": true,
   "timeoutSeconds": 300,
-  "dependsOn": ["check-os"],
   "parameters": {
     "namespace": {
       "type": "string",
@@ -889,8 +887,7 @@ Thêm step vào workflow manifest:
 ```json
 {
   "id": "my-check-step",
-  "feature": "my-check",
-  "needs": ["dependency-check"]
+  "feature": "my-check"
 }
 ```
 
@@ -906,13 +903,8 @@ Workflow local không cần server hoặc credential SSH:
   "failurePolicy": "continue",
   "steps": [
     {
-      "id": "dependency-check",
-      "feature": "check-os"
-    },
-    {
       "id": "my-check-step",
-      "feature": "my-check",
-      "needs": ["dependency-check"]
+      "feature": "my-check"
     }
   ]
 }
@@ -928,11 +920,6 @@ ghi action mong muốn, thường là `verify`:
   "apiVersion": "syssetup/workflow-config/v1",
   "workflow": "my-validation",
   "steps": {
-    "dependency-check": [
-      {
-        "args": ["verify"]
-      }
-    ],
     "my-check-step": [
       {
         "args": [

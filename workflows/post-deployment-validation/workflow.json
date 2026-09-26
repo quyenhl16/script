@@ -2,19 +2,14 @@
   "apiVersion": "syssetup/workflow/v1",
   "id": "post-deployment-validation",
   "name": "Post Deployment Validation",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Validate Kubernetes services, resources, environments, end-to-end connectivity and XML configuration after deployment",
   "executionMode": "local",
   "failurePolicy": "continue",
   "steps": [
     {
-      "id": "dependency-check",
-      "feature": "check-os"
-    },
-    {
       "id": "service-check",
-      "feature": "k8s-service-check",
-      "needs": ["dependency-check"]
+      "feature": "k8s-service-check"
     },
     {
       "id": "resource-check",

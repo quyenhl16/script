@@ -2,14 +2,13 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-env-check",
   "name": "Kubernetes environment check",
-  "version": "1.2.0",
+  "version": "1.2.2",
   "description": "Compare Kubernetes workload environments with an Excel baseline",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
   "workflowCompatible": true,
   "timeoutSeconds": 900,
-  "dependsOn": ["check-os"],
   "parameters": {
     "input_file": {
       "type": "string",

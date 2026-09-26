@@ -2,14 +2,13 @@
   "apiVersion": "syssetup/v1",
   "id": "nrf-query-check",
   "name": "NRF discovery query check",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Query NRF discovery for AMF and SMF instances and print readable JSON responses",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
   "workflowCompatible": true,
   "timeoutSeconds": 120,
-  "dependsOn": ["check-os"],
   "parameters": {
     "amf_query_url": {
       "type": "string",

@@ -193,6 +193,9 @@ class AuditTests(unittest.TestCase):
         self.assertIn('expected="pramf01" actual="wrong-value" source=E2', rendered)
         self.assertIn("[WARN] [EXTRA] comm/EXTRA_ENV", rendered)
         self.assertNotIn("must-not-be-printed", rendered)
+        self.assertIn("SYSSETUP_REPORT ", rendered)
+        self.assertIn('"component": "comm"', rendered)
+        self.assertIn('"status": "WARN"', rendered)
 
     def test_masks_secret_value_in_mismatch_output(self):
         actual = self.checker.actual_value(

@@ -116,6 +116,30 @@ func TestBundledEnableSCTPIsRemoteOnly(t *testing.T) {
 	}
 }
 
+func TestBundledChecksDoNotAutomaticallyRunCheckOS(t *testing.T) {
+	registry, err := Load(filepath.Join("..", "..", "features"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{
+		"k8s-service-check",
+		"k8s-resource-check",
+		"k8s-env-check",
+		"k8s-connectivity-check",
+		"nrf-query-check",
+	} {
+		feature, found := registry.Get(id)
+		if !found {
+			t.Fatalf("bundled feature %q was not found", id)
+		}
+		for _, dependency := range feature.DependsOn {
+			if dependency == "check-os" {
+				t.Errorf("feature %q still depends on check-os", id)
+			}
+		}
+	}
+}
+
 func TestBundledVerifyXMLConfigIsLocal(t *testing.T) {
 	registry, err := Load(filepath.Join("..", "..", "features"))
 	if err != nil {

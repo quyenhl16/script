@@ -169,10 +169,66 @@ func TestExcelChecklistReportContainsStructuredSectionsAndCounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	allXML := readExcelXML(t, content)
-	for _, expected := range []string{"Service: dns", "Checklist summary", "Checks", "Pass", "Fail", "Skip", "PASS: 1", "SKIP: 1", "Expected", "Actual", "Exists", "TCP port", "Not configured"} {
+	for _, expected := range []string{"Service: dns", "Checklist summary", "Checks", "Pass", "Fail", "Skip", "Expected", "Actual", "Exists", "TCP port", "Not configured", "COUNTIF"} {
 		if !strings.Contains(allXML, expected) {
 			t.Errorf("structured Excel report does not contain %q", expected)
 		}
+	}
+}
+
+func TestParseChecklistOutputPreservesPhaseSubsectionAndLegacyCurlLines(t *testing.T) {
+	output := `[PHASE 3] VERIFYING NETWORK CONNECTIVITY (PING TESTS)
+3.4 SBI-Client: MM pods -> peer NFs
+  Pod: [mm-0]
+[PASS] Pod [mm-0]: path to NRF (10.0.0.1) is reachable
+[PHASE 4] VERIFYING PEER NF HTTP CONNECTIVITY (CURL)
+  Pod: [mm-0]
+  NF: AUSF       [PASS] Pod [mm-0]: https://10.0.0.2/health is reachable (HTTP 200)`
+
+	parsed := parseChecklistOutput(output)
+	if parsed.Counts["PASS"] != 2 {
+		t.Fatalf("pass count = %d, want 2", parsed.Counts["PASS"])
+	}
+	if len(parsed.Sections) != 2 {
+		t.Fatalf("section count = %d, want 2: %#v", len(parsed.Sections), parsed.Sections)
+	}
+	if !strings.HasPrefix(parsed.Sections[0].Phase, "PHASE 3") || parsed.Sections[0].Subsection != "3.4 SBI-Client: MM pods -> peer NFs" {
+		t.Errorf("phase 3 hierarchy = %#v", parsed.Sections[0])
+	}
+	if !strings.HasPrefix(parsed.Sections[1].Phase, "PHASE 4") || !strings.Contains(parsed.Sections[1].Items[0].Check, "AUSF") {
+		t.Errorf("legacy curl item = %#v", parsed.Sections[1])
+	}
+}
+
+func TestComponentSummaryIsAuthoritativeAndRenderedWithFormulas(t *testing.T) {
+	output := `Component [redis]
+[FAIL] [MISMATCH] redis/limits.memory expected=4Gi actual=2Gi source=Resources!H16
+SYSSETUP_REPORT {"type":"component-summary","component":"redis","workload":"StatefulSet/redis container=redis","status":"FAIL","checks":4,"pass":3,"fail":1,"skip":0,"warn":0,"missing":0,"mismatch":1,"extra":0,"resolution_errors":0}`
+	parsed := parseChecklistOutput(output)
+	if parsed.Counts["PASS"] != 3 || parsed.Counts["FAIL"] != 1 || len(parsed.Components) != 1 {
+		t.Fatalf("component counts = %#v, components = %#v", parsed.Counts, parsed.Components)
+	}
+	document := Document{Entries: []Entry{{Title: "k8s-resource-check", Status: "failed", Output: output}}}
+	content, err := renderExcel(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	xmlText := readExcelXML(t, content)
+	for _, expected := range []string{"Component overview", "StatefulSet/redis", "Mismatch", "<f>SUM(D12:D12)</f>", "01-k8s-resource-check", "!B7</f>"} {
+		if !strings.Contains(xmlText, expected) {
+			t.Errorf("component Excel report does not contain %q", expected)
+		}
+	}
+}
+
+func TestFeatureRunAttachesOutputToFeatureWithoutExecutionOutputSheet(t *testing.T) {
+	document := FeatureRun(
+		domain.Profile{Name: "k8s-connectivity-check"},
+		[]domain.Result{{FeatureID: "k8s-connectivity-check", Status: domain.StatusDone, Output: "[PASS] Pod [mm-0]: reachable"}},
+		"==> heading\n[PASS] Pod [mm-0]: reachable", nil, time.Now(), time.Now(),
+	)
+	if len(document.Entries) != 1 || document.Entries[0].Title != "k8s-connectivity-check" || document.Entries[0].Output == "" {
+		t.Fatalf("feature entries = %#v", document.Entries)
 	}
 }
 

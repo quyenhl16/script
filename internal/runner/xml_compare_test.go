@@ -83,6 +83,50 @@ func TestXMLCompareUsesStableListKeysAcrossOrderAndNamespacePrefixes(t *testing.
 	}
 }
 
+func TestXMLCompareShellAcceptsWorkflowArguments(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell workflow integration test requires Unix paths")
+	}
+	bash, err := exec.LookPath("bash")
+	if err != nil {
+		t.Skipf("bash is not available: %v", err)
+	}
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skipf("python3 is not available: %v", err)
+	}
+
+	root := t.TempDir()
+	source := filepath.Join(root, "source.xml")
+	target := filepath.Join(root, "target.xml")
+	rules := filepath.Join(root, "rules.json")
+	writeXMLCompareFixture(t, source, `<config><value>A</value></config>`)
+	writeXMLCompareFixture(t, target, `<config><value>A</value></config>`)
+	writeXMLCompareFixture(t, rules, `{
+  "apiVersion":"syssetup/xml-check/v1",
+  "checks":[{
+    "id":"config",
+    "xpath":"/*[local-name()='config']",
+    "reportOnly":true,
+    "required":true
+  }]
+}`)
+
+	script := filepath.Join("..", "..", "features", "compare-xml-config", "run.sh")
+	command := exec.Command(bash, script, "verify",
+		"source_xml="+source,
+		"target_xml="+target,
+		"rules_file="+rules,
+		"show_equal=false",
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("workflow-style XML comparison failed: %v\n%s", err, output)
+	}
+	if !strings.Contains(string(output), "different=0") {
+		t.Fatalf("unexpected workflow-style comparison output:\n%s", output)
+	}
+}
+
 func pythonCommand(t *testing.T, arguments ...string) *exec.Cmd {
 	t.Helper()
 	name := "python3"

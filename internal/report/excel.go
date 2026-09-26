@@ -33,6 +33,7 @@ type excelSheet struct {
 	name       string
 	rows       []excelRow
 	merges     []string
+	formulas   map[string]string
 	columns    []float64
 	freezeRows int
 	autoFilter string
@@ -85,7 +86,7 @@ func buildExcelSheets(document Document) []excelSheet {
 func buildExcelSummary(document Document, entrySheets []string) excelSheet {
 	sheet := excelSheet{
 		name: "Summary", columns: []float64{24, 42, 24, 14, 12, 12, 12, 12, 12, 18, 56}, freezeRows: 1,
-		merges: []string{"A1:K1"},
+		merges: []string{"A1:K1"}, formulas: make(map[string]string),
 	}
 	sheet.rows = append(sheet.rows,
 		excelRow{index: 1, height: 28, cells: []excelCell{{column: 1, value: document.Title, style: 1}}},
@@ -131,6 +132,12 @@ func buildExcelSummary(document Document, entrySheets []string) excelSheet {
 			{9, strconv.Itoa(checklist.Counts["WARN"]), 12, true}, {10, excelDurationValue(entry.Duration), 11, true},
 			{11, excelCellText(entry.Message), 4, false},
 		}})
+		detailSheet := quoteExcelSheetName(entrySheets[index])
+		sheet.formulas["E"+strconv.Itoa(row)] = detailSheet + "!B7"
+		sheet.formulas["F"+strconv.Itoa(row)] = detailSheet + "!D7"
+		sheet.formulas["G"+strconv.Itoa(row)] = detailSheet + "!F7"
+		sheet.formulas["H"+strconv.Itoa(row)] = detailSheet + "!B8"
+		sheet.formulas["I"+strconv.Itoa(row)] = detailSheet + "!D8"
 		row++
 	}
 	if len(document.Entries) > 0 {
@@ -142,8 +149,8 @@ func buildExcelSummary(document Document, entrySheets []string) excelSheet {
 func buildExcelEntry(entry Entry, name string) excelSheet {
 	checklist := parseChecklistOutput(entry.Output)
 	sheet := excelSheet{
-		name: name, columns: []float64{12, 38, 13, 24, 24, 20, 56}, freezeRows: 9,
-		merges: []string{"A1:G1", "B4:G4", "A6:G6"},
+		name: name, columns: []float64{12, 38, 13, 22, 22, 18, 14, 12, 12, 12, 12, 18}, freezeRows: 9,
+		merges: []string{"A1:L1", "B4:L4", "A6:L6"}, formulas: make(map[string]string),
 	}
 	total := checklist.Counts["PASS"] + checklist.Counts["FAIL"] + checklist.Counts["SKIP"] + checklist.Counts["WARN"]
 	sheet.rows = append(sheet.rows,
@@ -156,33 +163,84 @@ func buildExcelEntry(entry Entry, name string) excelSheet {
 		excelRow{index: 4, cells: []excelCell{{1, "Message", 3, false}, {2, excelCellText(entry.Message), 4, false}}},
 		excelRow{index: 6, height: 22, cells: []excelCell{{1, "Checklist summary", 2, false}}},
 		excelRow{index: 7, cells: []excelCell{
-			{1, "Checks", 3, false}, {2, strconv.Itoa(total), 4, false},
-			{3, "Pass", 3, false}, {4, strconv.Itoa(checklist.Counts["PASS"]), 6, false},
-			{5, "Fail", 3, false}, {6, strconv.Itoa(checklist.Counts["FAIL"]), 7, false},
+			{1, "Checks", 3, false}, {2, strconv.Itoa(total), 12, true},
+			{3, "Pass", 3, false}, {4, strconv.Itoa(checklist.Counts["PASS"]), 6, true},
+			{5, "Fail", 3, false}, {6, strconv.Itoa(checklist.Counts["FAIL"]), 7, true},
 		}},
 		excelRow{index: 8, cells: []excelCell{
-			{1, "Skip", 3, false}, {2, strconv.Itoa(checklist.Counts["SKIP"]), 8, false},
-			{3, "Warn", 3, false}, {4, strconv.Itoa(checklist.Counts["WARN"]), 15, false},
-			{5, "Messages", 3, false}, {6, strconv.Itoa(len(checklist.Messages)), 4, false},
+			{1, "Skip", 3, false}, {2, strconv.Itoa(checklist.Counts["SKIP"]), 8, true},
+			{3, "Warn", 3, false}, {4, strconv.Itoa(checklist.Counts["WARN"]), 15, true},
+			{5, "Messages", 3, false}, {6, strconv.Itoa(len(checklist.Messages)), 12, true},
 		}},
 	)
 
 	row := 10
+	componentFirst, componentLast := 0, -1
+	if len(checklist.Components) > 0 {
+		sheet.rows = append(sheet.rows, excelRow{index: row, height: 22, cells: []excelCell{{1, "Component overview", 2, false}}})
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:L%d", row, row))
+		row++
+		sheet.rows = append(sheet.rows, excelRow{index: row, height: 24, cells: componentTableHeader()})
+		row++
+		componentFirst = row
+		for _, component := range checklist.Components {
+			errors := component.ResolutionErrors + component.Unresolved + component.WorkloadErrors
+			sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{
+				{1, excelCellText(component.Component), 4, false}, {2, excelCellText(component.Workload), 4, false},
+				{3, component.Status, excelStatusStyle(component.Status), false},
+				{4, strconv.Itoa(checklistComponentTotal(component)), 12, true}, {5, strconv.Itoa(component.Pass), 12, true},
+				{6, strconv.Itoa(component.Fail), 12, true}, {7, strconv.Itoa(component.Skip), 12, true},
+				{8, strconv.Itoa(component.Warn), 12, true}, {9, strconv.Itoa(component.Missing), 12, true},
+				{10, strconv.Itoa(component.Mismatch), 12, true}, {11, strconv.Itoa(component.Extra), 12, true},
+				{12, strconv.Itoa(errors), 12, true},
+			}})
+			row++
+		}
+		componentLast = row - 1
+		row++
+	}
+
+	type metricRange struct{ header, first, last int }
+	var phaseRange, subsectionRange *metricRange
+	lastPhase, lastSubsection := "", ""
+	firstDetail, lastDetail := 0, -1
+	finishRange := func(item *metricRange) {
+		if item != nil && item.first > 0 && item.last >= item.first {
+			setChecklistMetricFormulas(&sheet, item.header, item.first, item.last)
+		}
+	}
 	for _, section := range checklist.Sections {
-		if row+2 >= excelMaxRows {
+		if row+4 >= excelMaxRows {
 			break
 		}
+		phase := firstChecklistValue(section.Phase, "General")
+		if phase != lastPhase {
+			finishRange(subsectionRange)
+			finishRange(phaseRange)
+			lastPhase, lastSubsection = phase, ""
+			subsectionRange = nil
+			sheet.rows = append(sheet.rows, excelMetricHeader(row, phase, countSections(checklist.Sections, phase, ""), 2))
+			sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:D%d", row, row))
+			phaseRange = &metricRange{header: row}
+			row++
+		}
+		if section.Subsection != "" && section.Subsection != lastSubsection {
+			finishRange(subsectionRange)
+			lastSubsection = section.Subsection
+			sheet.rows = append(sheet.rows, excelMetricHeader(row, section.Subsection, countSections(checklist.Sections, phase, section.Subsection), 13))
+			sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:D%d", row, row))
+			subsectionRange = &metricRange{header: row}
+			row++
+		}
 		sectionCounts := countChecklistItems(section.Items)
-		sheet.rows = append(sheet.rows, excelRow{index: row, height: 22, cells: []excelCell{
-			{1, section.Title, 13, false}, {4, "PASS: " + strconv.Itoa(sectionCounts["PASS"]), 6, false},
-			{5, "FAIL: " + strconv.Itoa(sectionCounts["FAIL"]), 7, false},
-			{6, "SKIP: " + strconv.Itoa(sectionCounts["SKIP"]), 8, false},
-			{7, "WARN: " + strconv.Itoa(sectionCounts["WARN"]), 15, false},
-		}})
-		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:C%d", row, row))
+		sectionHeader := row
+		sheet.rows = append(sheet.rows, excelMetricHeader(row, section.Title, sectionCounts, 13))
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:D%d", row, row))
 		row++
 		sheet.rows = append(sheet.rows, excelRow{index: row, height: 24, cells: checklistTableHeader()})
+		sheet.merges = append(sheet.merges, fmt.Sprintf("G%d:L%d", row, row))
 		row++
+		sectionFirst := row
 		for index, item := range section.Items {
 			if row >= excelMaxRows {
 				break
@@ -197,28 +255,103 @@ func buildExcelEntry(entry Entry, name string) excelSheet {
 				{4, excelCellText(item.Expected), comparisonStyle, false}, {5, excelCellText(item.Actual), comparisonStyle, false},
 				{6, excelCellText(item.Source), 4, false}, {7, excelCellText(item.Details), 4, false},
 			}})
+			sheet.merges = append(sheet.merges, fmt.Sprintf("G%d:L%d", row, row))
 			row++
+		}
+		sectionLast := row - 1
+		setChecklistMetricFormulas(&sheet, sectionHeader, sectionFirst, sectionLast)
+		if firstDetail == 0 {
+			firstDetail = sectionFirst
+		}
+		lastDetail = sectionLast
+		if phaseRange.first == 0 {
+			phaseRange.first = sectionFirst
+		}
+		phaseRange.last = sectionLast
+		if subsectionRange != nil {
+			if subsectionRange.first == 0 {
+				subsectionRange.first = sectionFirst
+			}
+			subsectionRange.last = sectionLast
 		}
 		row++
 	}
+	finishRange(subsectionRange)
+	finishRange(phaseRange)
+
+	if componentFirst > 0 && componentLast >= componentFirst {
+		sheet.formulas["B7"] = fmt.Sprintf("SUM(D%d:D%d)", componentFirst, componentLast)
+		sheet.formulas["D7"] = fmt.Sprintf("SUM(E%d:E%d)", componentFirst, componentLast)
+		sheet.formulas["F7"] = fmt.Sprintf("SUM(F%d:F%d)", componentFirst, componentLast)
+		sheet.formulas["B8"] = fmt.Sprintf("SUM(G%d:G%d)", componentFirst, componentLast)
+		sheet.formulas["D8"] = fmt.Sprintf("SUM(H%d:H%d)", componentFirst, componentLast)
+	} else if firstDetail > 0 && lastDetail >= firstDetail {
+		sheet.formulas["B7"] = "SUM(D7,F7,B8,D8)"
+		sheet.formulas["D7"] = checklistCountFormula(firstDetail, lastDetail, "PASS")
+		sheet.formulas["F7"] = checklistCountFormula(firstDetail, lastDetail, "FAIL")
+		sheet.formulas["B8"] = checklistCountFormula(firstDetail, lastDetail, "SKIP")
+		sheet.formulas["D8"] = checklistCountFormula(firstDetail, lastDetail, "WARN")
+	}
 	if len(checklist.Messages) > 0 && row+1 < excelMaxRows {
 		sheet.rows = append(sheet.rows, excelRow{index: row, height: 22, cells: []excelCell{{1, "Additional messages", 13, false}}})
-		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:G%d", row, row))
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:L%d", row, row))
 		row++
 		for _, message := range checklist.Messages {
 			if row >= excelMaxRows {
 				break
 			}
 			sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{{1, excelCellText(message), 4, false}}})
-			sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:G%d", row, row))
+			sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:L%d", row, row))
 			row++
 		}
 	}
-	if len(checklist.Sections) == 0 && len(checklist.Messages) == 0 {
+	if len(checklist.Sections) == 0 && len(checklist.Components) == 0 && len(checklist.Messages) == 0 {
 		sheet.rows = append(sheet.rows, excelRow{index: row, cells: []excelCell{{1, "No checklist output", 4, false}}})
-		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:G%d", row, row))
+		sheet.merges = append(sheet.merges, fmt.Sprintf("A%d:L%d", row, row))
 	}
 	return sheet
+}
+
+func componentTableHeader() []excelCell {
+	labels := []string{"Component", "Workload", "Status", "Checks", "Pass", "Fail", "Skip", "Warn", "Missing", "Mismatch", "Extra", "Errors"}
+	cells := make([]excelCell, 0, len(labels))
+	for index, label := range labels {
+		cells = append(cells, excelCell{index + 1, label, 5, false})
+	}
+	return cells
+}
+
+func excelMetricHeader(row int, title string, counts map[string]int, style int) excelRow {
+	return excelRow{index: row, height: 22, cells: []excelCell{
+		{1, title, style, false}, {5, "Pass", 3, false}, {6, strconv.Itoa(counts["PASS"]), 6, true},
+		{7, "Fail", 3, false}, {8, strconv.Itoa(counts["FAIL"]), 7, true},
+		{9, "Skip", 3, false}, {10, strconv.Itoa(counts["SKIP"]), 8, true},
+		{11, "Warn", 3, false}, {12, strconv.Itoa(counts["WARN"]), 15, true},
+	}}
+}
+
+func setChecklistMetricFormulas(sheet *excelSheet, header, first, last int) {
+	sheet.formulas["F"+strconv.Itoa(header)] = checklistCountFormula(first, last, "PASS")
+	sheet.formulas["H"+strconv.Itoa(header)] = checklistCountFormula(first, last, "FAIL")
+	sheet.formulas["J"+strconv.Itoa(header)] = checklistCountFormula(first, last, "SKIP")
+	sheet.formulas["L"+strconv.Itoa(header)] = checklistCountFormula(first, last, "WARN")
+}
+
+func checklistCountFormula(first, last int, status string) string {
+	return fmt.Sprintf("COUNTIF($C$%d:$C$%d,\"%s\")", first, last, status)
+}
+
+func countSections(sections []checklistSection, phase, subsection string) map[string]int {
+	counts := map[string]int{"PASS": 0, "FAIL": 0, "SKIP": 0, "WARN": 0}
+	for _, section := range sections {
+		if firstChecklistValue(section.Phase, "General") != phase || subsection != "" && section.Subsection != subsection {
+			continue
+		}
+		for status, count := range countChecklistItems(section.Items) {
+			counts[status] += count
+		}
+	}
+	return counts
 }
 
 func checklistTableHeader() []excelCell {
@@ -265,6 +398,10 @@ func excelSheetNames(entries []Entry) []string {
 		names[index] = candidate
 	}
 	return names
+}
+
+func quoteExcelSheetName(name string) string {
+	return "'" + strings.ReplaceAll(name, "'", "''") + "'"
 }
 
 func excelSummaryValue(value string) (string, bool) {
@@ -359,7 +496,9 @@ func excelWorksheet(sheet excelSheet) string {
 		output.WriteString(`>`)
 		for _, cell := range row.cells {
 			reference := excelColumnName(cell.column) + strconv.Itoa(row.index)
-			if cell.number {
+			if formula, found := sheet.formulas[reference]; found {
+				fmt.Fprintf(&output, `<c r="%s" s="%d"><f>%s</f><v>%s</v></c>`, reference, cell.style, xmlEscape(formula), cell.value)
+			} else if cell.number {
 				fmt.Fprintf(&output, `<c r="%s" s="%d"><v>%s</v></c>`, reference, cell.style, cell.value)
 			} else {
 				fmt.Fprintf(&output, `<c r="%s" s="%d" t="inlineStr"><is><t xml:space="preserve">%s</t></is></c>`, reference, cell.style, xmlEscape(cell.value))

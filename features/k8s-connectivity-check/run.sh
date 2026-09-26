@@ -433,7 +433,8 @@ url_for_log() {
 
 curl_from_pod() {
   local pod="$1"
-  local url="$2"
+  local nf_name="$2"
+  local url="$3"
   local response
   local http_code
   local status
@@ -458,7 +459,7 @@ curl_from_pod() {
   display_url="$(url_for_log "$url")"
 
   if ((status == 0)) && [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
-    pass "Pod [$pod]: $display_url is reachable (HTTP $http_code)"
+    pass "Pod [$pod]: NF [$nf_name] $display_url is reachable (HTTP $http_code)"
     return
   fi
 
@@ -466,7 +467,7 @@ curl_from_pod() {
   detail="${detail//$'\n'/ }"
   detail="${detail:0:240}"
   [[ -n "$detail" ]] || detail="curl exited with status $status"
-  fail "Pod [$pod]: $display_url is unreachable ($detail)"
+  fail "Pod [$pod]: NF [$nf_name] $display_url is unreachable ($detail)"
 }
 
 phase_check_http() {
@@ -504,8 +505,7 @@ phase_check_http() {
       target_urls=()
       read -r -a target_urls <<< "${nf_urls[$nf_name]//,/ }"
       for url in "${target_urls[@]}"; do
-        printf '  NF: %-10s ' "$nf_name"
-        curl_from_pod "$pod" "$url"
+        curl_from_pod "$pod" "$nf_name" "$url"
       done
     done
   done

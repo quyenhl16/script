@@ -163,7 +163,6 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 		t.Fatalf("executionMode = %q, want local", definition.ExecutionMode)
 	}
 	wantFeatures := []string{
-		"check-os",
 		"k8s-service-check",
 		"k8s-resource-check",
 		"k8s-env-check",

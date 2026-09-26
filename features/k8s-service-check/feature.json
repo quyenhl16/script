@@ -2,14 +2,13 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-service-check",
   "name": "Kubernetes service check",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "Verify required services, ready endpoints, expected External IPs and TCP connectivity",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
   "workflowCompatible": true,
   "timeoutSeconds": 900,
-  "dependsOn": ["check-os"],
   "parameters": {
     "namespace": {
       "type": "string",

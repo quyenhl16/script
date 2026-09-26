@@ -2,14 +2,13 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-resource-check",
   "name": "Kubernetes resource check",
-  "version": "1.2.1",
+  "version": "1.2.3",
   "description": "Compare Kubernetes container resources and persistent volume capacity with an Excel baseline",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
   "requireRoot": false,
   "workflowCompatible": true,
   "timeoutSeconds": 900,
-  "dependsOn": ["check-os"],
   "parameters": {
     "input_file": {
       "type": "string",

@@ -1,69 +1,97 @@
 package report
 
 import (
+	"encoding/json"
 	"regexp"
 	"strings"
 )
 
 type checklistItem struct {
-	Check    string
-	Status   string
-	Expected string
-	Actual   string
-	Source   string
-	Details  string
+	Check, Status, Expected, Actual, Source, Details string
 }
 
 type checklistSection struct {
-	Title string
-	Items []checklistItem
+	Title, Phase, Subsection string
+	Items                    []checklistItem
+}
+
+type checklistComponent struct {
+	Component        string `json:"component"`
+	Workload         string `json:"workload"`
+	Status           string `json:"status"`
+	Checks           int    `json:"checks"`
+	Pass             int    `json:"pass"`
+	Fail             int    `json:"fail"`
+	Skip             int    `json:"skip"`
+	Warn             int    `json:"warn"`
+	Missing          int    `json:"missing"`
+	Mismatch         int    `json:"mismatch"`
+	Extra            int    `json:"extra"`
+	ResolutionErrors int    `json:"resolution_errors"`
+	Unresolved       int    `json:"unresolved"`
+	WorkloadErrors   int    `json:"workload_errors"`
+}
+
+type checklistRecord struct {
+	Type string `json:"type"`
+	checklistComponent
 }
 
 type checklistOutput struct {
-	Sections []checklistSection
-	Messages []string
-	Counts   map[string]int
+	Sections   []checklistSection
+	Components []checklistComponent
+	Messages   []string
+	Counts     map[string]int
 }
 
 var (
-	checklistStatusPattern = regexp.MustCompile(`^\s*\[(PASS|FAIL|FAILED|SKIP|SKIPPED|WARN|WARNING)\]\s*(?:\[([^]]+)\]\s*)?(.*)$`)
-	checklistFieldPattern  = regexp.MustCompile(`(?i)(?:^|\s)(expected|actual|source|error)=`)
-	separatorPattern       = regexp.MustCompile(`^[=*_\-]{3,}$`)
-	serviceHeadingPattern  = regexp.MustCompile(`(?i)^checking\s+service\s*:\s*(.+)$`)
-	phaseHeadingPattern    = regexp.MustCompile(`(?i)^\[phase\s*([^]]*)\]\s*(.*)$`)
-	scanningHeadingPattern = regexp.MustCompile(`(?i)^scanning\s+pod\s+group\s*:\s*(.+?)(?:\s*\(.*)?$`)
-	entityPrefixPattern    = regexp.MustCompile(`(?i)^(service|pod|command)\s*\[([^]]+)\]\s*:?\s*(.*)$`)
-	comparisonPathPattern  = regexp.MustCompile(`^([^\s/]+)/([^\s]+)(?:\s+(.*))?$`)
-	completionPattern      = regexp.MustCompile(`(?i)^(?:checklist|dependency check|.* check) completed:`)
+	checklistStatusPattern  = regexp.MustCompile(`(?i)^\s*(.*?)\[(PASS|FAIL|FAILED|SKIP|SKIPPED|WARN|WARNING)\]\s*(?:\[([^]]+)\]\s*)?(.*)$`)
+	checklistFieldPattern   = regexp.MustCompile(`(?i)(?:^|\s)(expected|actual|source|error)=`)
+	separatorPattern        = regexp.MustCompile(`^[=*_-]{3,}$`)
+	serviceHeadingPattern   = regexp.MustCompile(`(?i)^checking\s+service\s*:\s*(.+)$`)
+	phaseHeadingPattern     = regexp.MustCompile(`(?i)^\[phase\s*([^]]*)\]\s*(.*)$`)
+	subsectionPattern       = regexp.MustCompile(`^(\d+(?:\.\d+)+)\s+(.+)$`)
+	scanningHeadingPattern  = regexp.MustCompile(`(?i)^scanning\s+pod\s+group\s*:\s*(.+?)(?:\s*\(.*)?$`)
+	podHeadingPattern       = regexp.MustCompile(`(?i)^pod\s*:\s*\[([^]]+)\]$`)
+	componentHeadingPattern = regexp.MustCompile(`(?i)^component\s*\[([^]]+)\]$`)
+	entityPrefixPattern     = regexp.MustCompile(`(?i)^(service|pod|command)\s*\[([^]]+)\]\s*:?\s*(.*)$`)
+	comparisonPathPattern   = regexp.MustCompile(`^([^\s/]+)/([^\s]+)(?:\s+(.*))?$`)
+	completionPattern       = regexp.MustCompile(`(?i)^(?:checklist|dependency check|.* check) completed:`)
 )
+
+const checklistRecordPrefix = "SYSSETUP_REPORT "
 
 func parseChecklistOutput(output string) checklistOutput {
 	parsed := checklistOutput{Counts: map[string]int{"PASS": 0, "FAIL": 0, "SKIP": 0, "WARN": 0}}
 	sectionIndex := make(map[string]int)
-	currentSection := "General"
-	lastSection := -1
-	lastItem := -1
+	currentPhase, currentSubsection, currentSection := "General", "", "General"
+	lastSection, lastItem := -1, -1
 
-	addItem := func(section string, item checklistItem) {
-		section = strings.TrimSpace(section)
-		if section == "" {
-			section = "General"
-		}
-		key := strings.ToLower(section)
+	addItem := func(phase, subsection, section string, item checklistItem) {
+		section = firstChecklistValue(section, subsection, phase, "General")
+		key := strings.ToLower(strings.Join([]string{phase, subsection, section}, "\x00"))
 		index, found := sectionIndex[key]
 		if !found {
 			index = len(parsed.Sections)
 			sectionIndex[key] = index
-			parsed.Sections = append(parsed.Sections, checklistSection{Title: section})
+			parsed.Sections = append(parsed.Sections, checklistSection{Title: section, Phase: strings.TrimSpace(phase), Subsection: strings.TrimSpace(subsection)})
 		}
 		parsed.Sections[index].Items = append(parsed.Sections[index].Items, item)
 		parsed.Counts[item.Status]++
-		lastSection = index
-		lastItem = len(parsed.Sections[index].Items) - 1
+		lastSection, lastItem = index, len(parsed.Sections[index].Items)-1
 	}
 
 	for _, rawLine := range strings.Split(cleanOutput(output), "\n") {
 		line := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(line, checklistRecordPrefix) {
+			var record checklistRecord
+			payload := strings.TrimSpace(strings.TrimPrefix(line, checklistRecordPrefix))
+			if json.Unmarshal([]byte(payload), &record) == nil && record.Type == "component-summary" {
+				record.Status = normalizeChecklistStatus(record.Status)
+				parsed.Components = append(parsed.Components, record.checklistComponent)
+			}
+			continue
+		}
 		if line == "" || separatorPattern.MatchString(line) || completionPattern.MatchString(line) {
 			continue
 		}
@@ -73,16 +101,32 @@ func parseChecklistOutput(output string) checklistOutput {
 			continue
 		}
 		if match := phaseHeadingPattern.FindStringSubmatch(line); match != nil {
-			label := strings.TrimSpace(match[2])
-			if label == "" {
-				label = "Phase " + strings.TrimSpace(match[1])
+			currentPhase = "PHASE " + strings.TrimSpace(match[1])
+			if label := strings.TrimSpace(match[2]); label != "" {
+				currentPhase += " — " + label
 			}
-			currentSection = label
+			currentSubsection, currentSection = "", ""
+			lastSection, lastItem = -1, -1
+			continue
+		}
+		if match := subsectionPattern.FindStringSubmatch(line); match != nil {
+			currentSubsection = strings.TrimSpace(match[1] + " " + match[2])
+			currentSection = ""
 			lastSection, lastItem = -1, -1
 			continue
 		}
 		if match := scanningHeadingPattern.FindStringSubmatch(line); match != nil {
 			currentSection = "Pod group: " + strings.Trim(strings.TrimSpace(match[1]), "[]")
+			lastSection, lastItem = -1, -1
+			continue
+		}
+		if match := podHeadingPattern.FindStringSubmatch(line); match != nil {
+			currentSection = "Pod: " + strings.TrimSpace(match[1])
+			lastSection, lastItem = -1, -1
+			continue
+		}
+		if match := componentHeadingPattern.FindStringSubmatch(line); match != nil {
+			currentSection = "Component: " + strings.TrimSpace(match[1])
 			lastSection, lastItem = -1, -1
 			continue
 		}
@@ -92,29 +136,55 @@ func parseChecklistOutput(output string) checklistOutput {
 			if lastSection >= 0 && lastItem >= 0 && strings.HasPrefix(rawLine, " ") {
 				item := &parsed.Sections[lastSection].Items[lastItem]
 				item.Details = joinChecklistDetail(item.Details, line)
-			} else if !looksLikeChecklistHeading(line) {
+			} else if !looksLikeChecklistHeading(line) && !looksLikeChecklistMetadata(line, currentSection) {
 				parsed.Messages = append(parsed.Messages, line)
 			}
 			continue
 		}
 
-		status := normalizeChecklistStatus(match[1])
-		qualifier := strings.TrimSpace(match[2])
-		body := strings.TrimSpace(match[3])
+		prefix, qualifier, body := strings.TrimSpace(match[1]), strings.TrimSpace(match[3]), strings.TrimSpace(match[4])
+		if strings.HasPrefix(strings.ToLower(body), "summary:") {
+			continue
+		}
 		fields, remaining := extractChecklistFields(body)
 		section, check := checklistSectionAndCheck(currentSection, remaining)
-		item := checklistItem{
-			Check: check, Status: status, Expected: fields["expected"], Actual: fields["actual"],
-			Source: fields["source"], Details: fields["error"],
+		if prefix != "" {
+			check = strings.TrimSuffix(prefix, ":") + ": " + check
 		}
+		item := checklistItem{Check: check, Status: normalizeChecklistStatus(match[2]), Expected: fields["expected"], Actual: fields["actual"], Source: fields["source"], Details: fields["error"]}
 		if qualifier != "" {
 			item.Details = joinChecklistDetail(strings.ToUpper(qualifier), item.Details)
 		}
 		normalizeChecklistItem(&item)
-		addItem(section, item)
+		addItem(currentPhase, currentSubsection, section, item)
 	}
 
+	if len(parsed.Components) > 0 {
+		parsed.Counts = map[string]int{"PASS": 0, "FAIL": 0, "SKIP": 0, "WARN": 0}
+		for _, component := range parsed.Components {
+			parsed.Counts["PASS"] += component.Pass
+			parsed.Counts["FAIL"] += component.Fail
+			parsed.Counts["SKIP"] += component.Skip
+			parsed.Counts["WARN"] += component.Warn
+		}
+	}
 	return parsed
+}
+
+func firstChecklistValue(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return "General"
+}
+
+func checklistComponentTotal(component checklistComponent) int {
+	if component.Checks > 0 {
+		return component.Checks
+	}
+	return component.Pass + component.Fail + component.Skip + component.Warn
 }
 
 func normalizeChecklistStatus(value string) string {
@@ -138,23 +208,20 @@ func extractChecklistFields(value string) (map[string]string, string) {
 	if len(matches) == 0 {
 		return fields, strings.TrimSpace(value)
 	}
-	remainingParts := make([]string, 0, len(matches)+1)
-	remainingParts = append(remainingParts, strings.TrimSpace(value[:matches[0][0]]))
+	remaining := strings.TrimSpace(value[:matches[0][0]])
 	for index, match := range matches {
 		end := len(value)
 		if index+1 < len(matches) {
 			end = matches[index+1][0]
 		}
 		name := strings.ToLower(value[match[2]:match[3]])
-		fieldValue := strings.TrimSpace(value[match[1]:end])
-		fields[name] = trimChecklistValue(fieldValue)
+		fields[name] = trimChecklistValue(strings.TrimSpace(value[match[1]:end]))
 	}
-	return fields, strings.TrimSpace(strings.Join(nonEmptyStrings(remainingParts), " "))
+	return fields, remaining
 }
 
 func trimChecklistValue(value string) string {
-	value = strings.TrimSpace(value)
-	value = strings.TrimSuffix(value, ",")
+	value = strings.TrimSuffix(strings.TrimSpace(value), ",")
 	if len(value) >= 2 && ((value[0] == '[' && value[len(value)-1] == ']') || (value[0] == '(' && value[len(value)-1] == ')')) {
 		value = strings.TrimSpace(value[1 : len(value)-1])
 	}
@@ -168,12 +235,11 @@ func checklistSectionAndCheck(current, value string) (string, string) {
 		return kind + ": " + strings.TrimSpace(match[2]), strings.TrimSpace(match[3])
 	}
 	if match := comparisonPathPattern.FindStringSubmatch(value); match != nil {
-		section := "Component: " + strings.TrimSpace(match[1])
 		check := strings.TrimSpace(match[2])
 		if suffix := strings.TrimSpace(match[3]); suffix != "" {
 			check += " " + suffix
 		}
-		return section, check
+		return "Component: " + strings.TrimSpace(match[1]), check
 	}
 	if value == "" {
 		value = "Checklist item"
@@ -186,26 +252,16 @@ func normalizeChecklistItem(item *checklistItem) {
 	switch {
 	case strings.HasPrefix(lower, "exists (") && strings.HasSuffix(item.Check, ")"):
 		item.Details = joinChecklistDetail(item.Details, item.Check[len("exists ("):len(item.Check)-1])
-		item.Check = "Exists"
-		item.Expected = checklistValueOr(item.Expected, "Exists")
-		item.Actual = checklistValueOr(item.Actual, "Exists")
+		item.Check, item.Expected, item.Actual = "Exists", checklistValueOr(item.Expected, "Exists"), checklistValueOr(item.Actual, "Exists")
 	case strings.Contains(lower, "is missing from namespace"):
-		item.Check = "Exists in namespace"
-		item.Expected = checklistValueOr(item.Expected, "Exists")
-		item.Actual = checklistValueOr(item.Actual, "Missing")
+		item.Check, item.Expected, item.Actual = "Exists in namespace", checklistValueOr(item.Expected, "Exists"), checklistValueOr(item.Actual, "Missing")
 	case strings.HasPrefix(lower, "ready endpoint(s):"):
 		addresses := strings.TrimSpace(item.Check[len("ready endpoint(s):"):])
-		item.Check = "Ready endpoints"
-		item.Expected = checklistValueOr(item.Expected, "At least 1")
-		item.Actual = checklistValueOr(item.Actual, addresses)
+		item.Check, item.Expected, item.Actual = "Ready endpoints", checklistValueOr(item.Expected, "At least 1"), checklistValueOr(item.Actual, addresses)
 	case strings.Contains(lower, "no ready endpoint address was found"):
-		item.Check = "Ready endpoints"
-		item.Expected = checklistValueOr(item.Expected, "At least 1")
-		item.Actual = checklistValueOr(item.Actual, "0")
+		item.Check, item.Expected, item.Actual = "Ready endpoints", checklistValueOr(item.Expected, "At least 1"), checklistValueOr(item.Actual, "0")
 	case strings.Contains(lower, "has no tcp port") || strings.Contains(lower, "no tcp endpoint port was found"):
-		item.Check = "TCP port"
-		item.Expected = checklistValueOr(item.Expected, "Configured")
-		item.Actual = checklistValueOr(item.Actual, "Not configured")
+		item.Check, item.Expected, item.Actual = "TCP port", checklistValueOr(item.Expected, "Configured"), checklistValueOr(item.Actual, "Not configured")
 	case strings.HasPrefix(lower, "external ip matches"):
 		item.Check = "External IP"
 		if item.Status == "PASS" {
@@ -220,8 +276,7 @@ func normalizeChecklistItem(item *checklistItem) {
 			separator = " is reachable"
 		}
 		target, detail, _ := strings.Cut(item.Check[len("TCP "):], separator)
-		item.Check = "TCP connectivity: " + strings.TrimSpace(target)
-		item.Expected = checklistValueOr(item.Expected, "Reachable")
+		item.Check, item.Expected = "TCP connectivity: "+strings.TrimSpace(target), checklistValueOr(item.Expected, "Reachable")
 		if reachable {
 			item.Actual = checklistValueOr(item.Actual, "Reachable")
 		} else {
@@ -247,6 +302,14 @@ func looksLikeChecklistHeading(value string) bool {
 	return false
 }
 
+func looksLikeChecklistMetadata(value, currentSection string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if strings.HasPrefix(lower, "kubernetes ") || strings.HasPrefix(lower, "namespace=") || strings.HasPrefix(lower, "workbook=") || strings.HasPrefix(lower, "components=") {
+		return true
+	}
+	return strings.HasPrefix(currentSection, "Component: ") && strings.Contains(value, "/")
+}
+
 func joinChecklistDetail(left, right string) string {
 	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
 	if left == "" {
@@ -263,14 +326,4 @@ func checklistValueOr(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func nonEmptyStrings(values []string) []string {
-	result := values[:0]
-	for _, value := range values {
-		if strings.TrimSpace(value) != "" {
-			result = append(result, value)
-		}
-	}
-	return result
 }

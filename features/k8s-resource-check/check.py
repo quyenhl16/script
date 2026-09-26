@@ -553,6 +553,20 @@ def ignored_extra(path, patterns):
     return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
+def emit_component_summary(component, workload, component_stats):
+    failures = component_stats["fail"]
+    status = "FAIL" if failures else ("WARN" if component_stats["warn"] else "PASS")
+    payload = {
+        "type": "component-summary",
+        "component": component,
+        "workload": workload,
+        "status": status,
+        "checks": component_stats["pass"] + failures + component_stats["skip"] + component_stats["warn"],
+        **component_stats,
+    }
+    print("SYSSETUP_REPORT " + json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
 def audit(arguments, baseline, mappings):
     workloads = workload_snapshot(arguments.namespace)
     checks_storage = any(PV_STORAGE_PATH in expected for expected in baseline["components"].values())
@@ -571,6 +585,17 @@ def audit(arguments, baseline, mappings):
     for component, expected in baseline["components"].items():
         if not expected:
             continue
+        component_stats = {
+            "pass": 0,
+            "fail": 0,
+            "skip": 0,
+            "warn": 0,
+            "missing": 0,
+            "mismatch": 0,
+            "extra": 0,
+            "resolution_errors": 0,
+        }
+        workload_label = ""
         print("\nComponent [{}]".format(component))
         try:
             workload = resolve_workload(component, workloads, mappings)
@@ -580,7 +605,10 @@ def audit(arguments, baseline, mappings):
             init_container = select_container(component, workload, mappings, init=True) if needs_init else None
         except KubernetesError as error:
             stats["resolution_errors"] += 1
+            component_stats["resolution_errors"] += 1
+            component_stats["fail"] += 1
             print("[FAIL] [RESOLUTION] {}".format(error))
+            emit_component_summary(component, workload_label, component_stats)
             continue
 
         selected = []
@@ -591,13 +619,12 @@ def audit(arguments, baseline, mappings):
         if init_container is not None:
             selected.append("initContainer={}".format(init_container.get("name", "?")))
             actual.update(flatten_resources(init_container, "initContainer"))
-        print(
-            "  {}/{} {}".format(
+        workload_label = "{}/{} {}".format(
                 workload.get("kind", "?"),
                 workload.get("metadata", {}).get("name", "?"),
                 " ".join(selected),
-            )
-        )
+            ).strip()
+        print("  {}".format(workload_label))
 
         for path, rule in sorted(expected.items()):
             if path == PV_STORAGE_PATH:
@@ -605,6 +632,8 @@ def audit(arguments, baseline, mappings):
                 actual_display = display_persistent_volumes(resolved)
                 if not resolved or any("error" in item for item in resolved):
                     stats["missing"] += 1
+                    component_stats["missing"] += 1
+                    component_stats["fail"] += 1
                     print(
                         "[FAIL] [MISSING] {}/{} expected={} actual={} source={}".format(
                             component, path, rule["display"], actual_display, rule["source_cell"]
@@ -618,6 +647,8 @@ def audit(arguments, baseline, mappings):
                     )
                 except QuantityError as error:
                     stats["mismatch"] += 1
+                    component_stats["mismatch"] += 1
+                    component_stats["fail"] += 1
                     print(
                         "[FAIL] [MISMATCH] {}/{} expected={} actual={} error={} source={}".format(
                             component, path, rule["display"], actual_display, error, rule["source_cell"]
@@ -626,6 +657,7 @@ def audit(arguments, baseline, mappings):
                     continue
                 if matches:
                     stats["passed"] += 1
+                    component_stats["pass"] += 1
                     if arguments.show_pass:
                         print(
                             "[PASS] [MATCH] {}/{} expected={} actual={} source={}".format(
@@ -634,6 +666,8 @@ def audit(arguments, baseline, mappings):
                         )
                 else:
                     stats["mismatch"] += 1
+                    component_stats["mismatch"] += 1
+                    component_stats["fail"] += 1
                     print(
                         "[FAIL] [MISMATCH] {}/{} expected={} actual={} source={}".format(
                             component, path, rule["display"], actual_display, rule["source_cell"]
@@ -642,16 +676,21 @@ def audit(arguments, baseline, mappings):
                 continue
             if path not in actual:
                 stats["missing"] += 1
+                component_stats["missing"] += 1
+                component_stats["fail"] += 1
                 print("[FAIL] [MISSING] {}/{} expected={} source={}".format(component, path, rule["display"], rule["source_cell"]))
                 continue
             try:
                 deployed = parse_quantity(actual[path], rule["resource_type"])
             except QuantityError as error:
                 stats["mismatch"] += 1
+                component_stats["mismatch"] += 1
+                component_stats["fail"] += 1
                 print("[FAIL] [MISMATCH] {}/{} has invalid deployed value: {} source={}".format(component, path, error, rule["source_cell"]))
                 continue
             if deployed == rule["normalized"]:
                 stats["passed"] += 1
+                component_stats["pass"] += 1
                 if arguments.show_pass:
                     print(
                         "[PASS] [MATCH] {}/{} expected={} actual={} source={}".format(
@@ -664,6 +703,8 @@ def audit(arguments, baseline, mappings):
                     )
             else:
                 stats["mismatch"] += 1
+                component_stats["mismatch"] += 1
+                component_stats["fail"] += 1
                 print(
                     "[FAIL] [MISMATCH] {}/{} expected={} actual={} source={}".format(
                         component, path, rule["display"], clean_quantity(actual[path]), rule["source_cell"]
@@ -674,10 +715,15 @@ def audit(arguments, baseline, mappings):
             if ignored_extra(path, ignore_patterns):
                 continue
             stats["extra"] += 1
+            component_stats["extra"] += 1
             if arguments.extra_policy == "fail":
+                component_stats["fail"] += 1
                 print("[FAIL] [EXTRA] {}/{} is not defined in Excel".format(component, path))
             elif arguments.extra_policy == "warn":
+                component_stats["warn"] += 1
                 print("[WARN] [EXTRA] {}/{} is not defined in Excel".format(component, path))
+
+        emit_component_summary(component, workload_label, component_stats)
 
     failures = stats["missing"] + stats["mismatch"] + stats["resolution_errors"]
     if arguments.extra_policy == "fail":

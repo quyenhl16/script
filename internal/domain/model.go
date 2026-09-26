@@ -1,5 +1,7 @@
 package domain
 
+import "time"
+
 type Parameter struct {
 	Type        string `json:"type"`
 	Description string `json:"description,omitempty"`
@@ -66,4 +68,6 @@ type Result struct {
 	FeatureID string
 	Status    Status
 	Message   string
+	Output    string
+	Duration  time.Duration
 }

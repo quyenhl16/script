@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -83,38 +84,49 @@ func (r *Runner) Execute(ctx context.Context, features []domain.ResolvedFeature)
 
 func (r *Runner) executeFeature(ctx context.Context, item domain.ResolvedFeature) domain.Result {
 	feature := item.Feature
+	started := time.Now()
+	var captured bytes.Buffer
+	result := func(status domain.Status, message string) domain.Result {
+		return domain.Result{
+			FeatureID: feature.ID,
+			Status:    status,
+			Message:   message,
+			Output:    captured.String(),
+			Duration:  time.Since(started),
+		}
+	}
 	if r.options.DryRun {
 		fmt.Fprintf(r.options.Output, "[PLAN] %-20s check -> apply -> verify\n", feature.ID)
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusPlanned, Message: "dry-run"}
+		return result(domain.StatusPlanned, "dry-run")
 	}
 	if !r.osInfo.Supports(feature.SupportedOS) {
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusFailed, Message: "unsupported operating system: " + r.osInfo.ID}
+		return result(domain.StatusFailed, "unsupported operating system: "+r.osInfo.ID)
 	}
 	if feature.RequireRoot && !platform.IsRoot() {
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusFailed, Message: "root privileges required"}
+		return result(domain.StatusFailed, "root privileges required")
 	}
 
 	fmt.Fprintf(r.options.Output, "\n==> %s (%s)\n", feature.Name, feature.ID)
-	checkErr := r.runAction(ctx, item, "check")
+	checkErr := r.runAction(ctx, item, "check", &captured)
 	if checkErr == nil {
 		fmt.Fprintln(r.options.Output, "    already configured")
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusSkipped, Message: "already configured"}
+		return result(domain.StatusSkipped, "already configured")
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(checkErr, &exitErr) || exitErr.ExitCode() != checkNeedsChange {
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusFailed, Message: "check: " + checkErr.Error()}
+		return result(domain.StatusFailed, "check: "+checkErr.Error())
 	}
-	if err := r.runAction(ctx, item, "apply"); err != nil {
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusFailed, Message: "apply: " + err.Error()}
+	if err := r.runAction(ctx, item, "apply", &captured); err != nil {
+		return result(domain.StatusFailed, "apply: "+err.Error())
 	}
-	if err := r.runAction(ctx, item, "verify"); err != nil {
-		return domain.Result{FeatureID: feature.ID, Status: domain.StatusFailed, Message: "verify: " + err.Error()}
+	if err := r.runAction(ctx, item, "verify", &captured); err != nil {
+		return result(domain.StatusFailed, "verify: "+err.Error())
 	}
 	fmt.Fprintln(r.options.Output, "    done")
-	return domain.Result{FeatureID: feature.ID, Status: domain.StatusDone, Message: "configured"}
+	return result(domain.StatusDone, "configured")
 }
 
-func (r *Runner) runAction(parent context.Context, item domain.ResolvedFeature, action string) error {
+func (r *Runner) runAction(parent context.Context, item domain.ResolvedFeature, action string, capture io.Writer) error {
 	timeout := time.Duration(item.Feature.TimeoutSeconds) * time.Second
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
@@ -122,7 +134,11 @@ func (r *Runner) runAction(parent context.Context, item domain.ResolvedFeature, 
 	script := filepath.Join(item.Feature.Directory, item.Feature.Entrypoint)
 	cmd := exec.CommandContext(ctx, "/usr/bin/env", "bash", script, action)
 	cmd.Env = append(os.Environ(), parameterEnvironment(item.Parameters)...)
-	displayOutput := newStatusColorWriter(r.options.Output, statusColorsEnabled())
+	displayTarget := r.options.Output
+	if capture != nil {
+		displayTarget = io.MultiWriter(displayTarget, capture)
+	}
+	displayOutput := newStatusColorWriter(displayTarget, statusColorsEnabled())
 	var output io.Writer = displayOutput
 	if r.logFile != nil {
 		output = io.MultiWriter(output, r.logFile)

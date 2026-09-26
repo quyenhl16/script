@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/quyenhl16/script/internal/domain"
@@ -14,9 +15,16 @@ import (
 func FeatureRun(profile domain.Profile, results []domain.Result, output string, runErr error, started, finished time.Time) Document {
 	counts := make(map[domain.Status]int)
 	entries := make([]Entry, 0, len(results)+1)
+	hasFeatureOutput := false
 	for _, result := range results {
 		counts[result.Status]++
-		entries = append(entries, Entry{Title: result.FeatureID, Status: string(result.Status), Message: result.Message})
+		if strings.TrimSpace(result.Output) != "" {
+			hasFeatureOutput = true
+		}
+		entries = append(entries, Entry{
+			Title: result.FeatureID, Status: string(result.Status), Message: result.Message,
+			Output: result.Output, Duration: result.Duration,
+		})
 	}
 	status := "PASS"
 	if counts[domain.StatusPlanned] == len(results) && len(results) > 0 {
@@ -30,7 +38,9 @@ func FeatureRun(profile domain.Profile, results []domain.Result, output string, 
 	if errors.Is(runErr, context.Canceled) {
 		status = "CANCELLED"
 	}
-	if output != "" {
+	// Keep the aggregate output only as a fallback for failures that happened
+	// before the runner could associate output with an individual feature.
+	if strings.TrimSpace(output) != "" && !hasFeatureOutput {
 		entries = append(entries, Entry{Title: "Execution output", Status: status, Output: output})
 	}
 	return Document{

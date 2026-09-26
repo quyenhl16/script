@@ -238,6 +238,10 @@ class AuditTests(unittest.TestCase):
         )
         self.assertIn("[FAIL] [MISSING] mm/container.requests.cpu", rendered)
         self.assertIn("[WARN] [EXTRA] comm/container.limits.cpu", rendered)
+        self.assertIn("SYSSETUP_REPORT ", rendered)
+        self.assertIn('"component": "comm"', rendered)
+        self.assertIn('"pass": 3', rendered)
+        self.assertIn('"warn": 1', rendered)
 
     def test_multiple_init_containers_require_mapping(self):
         workload = {

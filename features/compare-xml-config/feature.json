@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "compare-xml-config",
   "name": "Compare XML Configurations",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Compare two XML files by canonical leaf path and highlight critical paths",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],

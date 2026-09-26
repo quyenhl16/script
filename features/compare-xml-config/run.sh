@@ -13,6 +13,26 @@ rules_file="${SYSSETUP_PARAM_RULES_FILE:-checks/xml/system-critical-paths.json}"
 show_equal="${SYSSETUP_PARAM_SHOW_EQUAL:-false}"
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
+parse_workflow_arguments() {
+  local argument
+  for argument in "$@"; do
+    case "$argument" in
+      source_xml=*) source_xml="${argument#*=}" ;;
+      target_xml=*) target_xml="${argument#*=}" ;;
+      rules_file=*) rules_file="${argument#*=}" ;;
+      show_equal=*) show_equal="${argument#*=}" ;;
+      *)
+        printf 'Unknown argument: %q\n' "$argument" >&2
+        return 2
+        ;;
+    esac
+  done
+}
+
+if (($# > 1)); then
+  parse_workflow_arguments "${@:2}" || exit $?
+fi
+
 preflight() {
   [[ -n "$source_xml" ]] || fail "source_xml parameter is required"
   [[ -f "$source_xml" && -r "$source_xml" ]] || fail "source XML is not a readable regular file: $source_xml"
@@ -42,7 +62,7 @@ case "$action" in
     :
     ;;
   *)
-    printf 'Usage: %s {check|apply|verify|rollback}\n' "$0" >&2
+    printf 'Usage: %s {check|apply|verify|rollback} [key=value ...]\n' "$0" >&2
     exit 2
     ;;
 esac
