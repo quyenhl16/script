@@ -1,7 +1,9 @@
 package workflow
 
 import (
+	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"os"
@@ -336,7 +338,7 @@ func TestExecuteServerContinuesAfterFailure(t *testing.T) {
 		},
 	}
 
-	result := executeServer(context.Background(), remote.Server{}, steps, nil, "continue")
+	result := executeServer(context.Background(), remote.Server{}, steps, nil, "continue", "")
 	if result.success {
 		t.Fatal("server execution with failed invocations must not be successful")
 	}
@@ -366,7 +368,7 @@ func TestExecuteServerStillStopsWithDefaultPolicy(t *testing.T) {
 		},
 	}
 
-	result := executeServer(context.Background(), remote.Server{}, steps, nil, "")
+	result := executeServer(context.Background(), remote.Server{}, steps, nil, "", "")
 	if len(result.results) != 2 {
 		t.Fatalf("result count = %d, want 2", len(result.results))
 	}
@@ -450,5 +452,120 @@ func writeWorkflow(t *testing.T, root, manifest string) {
 	}
 	if err := os.WriteFile(filepath.Join(directory, "workflow.json"), []byte(manifest), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestApplyProfilesResolvesParameterArtifactSources(t *testing.T) {
+	featuresRoot := t.TempDir()
+	directory := filepath.Join(featuresRoot, "ems-checklist")
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{
+  "apiVersion":"syssetup/v1", "id":"ems-checklist", "name":"EMS", "version":"1",
+  "entrypoint":"run.sh", "workflowCompatible":true, "timeoutSeconds":30,
+  "parameters":{"counter_input_file":{"type":"string"},"output_dir":{"type":"string"}}
+}`
+	if err := os.WriteFile(filepath.Join(directory, "feature.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "run.sh"), []byte("#!/usr/bin/env bash\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	features, err := registry.Load(featuresRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workflows := &Registry{features: features}
+	definition := Definition{Steps: []Step{{ID: "ems-check", Feature: "ems-checklist"}}}
+	config := Config{Steps: map[string][]Invocation{
+		"ems-check": {{
+			Args: []string{"verify", "check_type=counter"},
+			Artifacts: []ArtifactReference{
+				{ID: "counter-checker", Source: "../features/ems-checklist/check_counters.py"},
+				{ID: "counter-input-file", Source: "@counter_input_file"},
+			},
+		}},
+	}}
+	profiles := []domain.Profile{{
+		Name: "ems-checklist", System: "system-a",
+		Features: []domain.FeatureSelection{{
+			ID: "ems-checklist",
+			Parameters: map[string]any{
+				"counter_input_file": "./profiles/system-a/input/vAMF_Counter_v1.1.xlsx",
+				"output_dir":         "./reports/system-a/ems_check_report",
+			},
+		}},
+	}}
+	got, err := workflows.ApplyProfiles(definition, config, profiles, "system-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := got.Steps["ems-check"][0].Artifacts
+	if artifacts[0].Source != "../features/ems-checklist/check_counters.py" {
+		t.Fatalf("plain source must pass through: %q", artifacts[0].Source)
+	}
+	if artifacts[1].Source != "./profiles/system-a/input/vAMF_Counter_v1.1.xlsx" {
+		t.Fatalf("parameter source must resolve from the profile: %q", artifacts[1].Source)
+	}
+	if got.Steps["ems-check"][0].Args[len(got.Steps["ems-check"][0].Args)-1] != "output_dir=./reports/system-a/ems_check_report" {
+		t.Fatalf("output_dir must also merge into args: %#v", got.Steps["ems-check"][0].Args)
+	}
+
+	bad := Config{Steps: map[string][]Invocation{
+		"ems-check": {{Args: []string{"verify"}, Artifacts: []ArtifactReference{{ID: "x", Source: "@missing_param"}}}},
+	}}
+	if _, err := workflows.ApplyProfiles(definition, bad, profiles, "system-a"); err == nil {
+		t.Fatal("undefined parameter reference must fail")
+	}
+}
+
+func TestExtractTarGzWritesFilesAndRejectsEscapes(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "out")
+	var buffer bytes.Buffer
+	writer := gzip.NewWriter(&buffer)
+	tarWriter := tar.NewWriter(writer)
+	content := []byte("comparison data\n")
+	if err := tarWriter.WriteHeader(&tar.Header{Name: "counter/comparison.csv", Mode: 0o644, Size: int64(len(content))}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tarWriter.Write(content); err != nil {
+		t.Fatal(err)
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractTarGz(buffer.Bytes(), target); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(filepath.Join(target, "counter", "comparison.csv"))
+	if err != nil || string(written) != string(content) {
+		t.Fatalf("extracted file mismatch: %q %v", written, err)
+	}
+
+	var evil bytes.Buffer
+	evilWriter := gzip.NewWriter(&evil)
+	evilTar := tar.NewWriter(evilWriter)
+	if err := evilTar.WriteHeader(&tar.Header{Name: "../../escape.txt", Mode: 0o644, Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := evilTar.Write([]byte("x")); err != nil {
+		t.Fatal(err)
+	}
+	if err := evilTar.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := evilWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	escapeTarget := filepath.Join(t.TempDir(), "esc")
+	if err := extractTarGz(evil.Bytes(), escapeTarget); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(escapeTarget, "..", "..", "escape.txt")); !os.IsNotExist(err) {
+		t.Fatal("archive entry outside the target root must be skipped")
 	}
 }

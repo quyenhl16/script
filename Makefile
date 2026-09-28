@@ -36,6 +36,11 @@ package-arch:
 	GOOS=linux GOARCH=$(ARCH) CGO_ENABLED=0 go build $(GO_BUILD_FLAGS) -o "$(STAGING_DIR)/bin/$(BINARY_NAME)" ./cmd/syssetup
 	cp -R features profiles scripts workflows workflow-configs checks "$(STAGING_DIR)/"
 	cp README.md setup.sh "$(STAGING_DIR)/"
+	{ \
+		echo "commit=$$(git rev-parse HEAD)"; \
+		echo "branch=$$(git symbolic-ref --short -q HEAD || echo detached)"; \
+		echo "remote=$$(git remote get-url origin 2>/dev/null || echo unavailable)"; \
+	} > "$(STAGING_DIR)/Version"
 	chmod +x "$(STAGING_DIR)/bin/$(BINARY_NAME)" "$(STAGING_DIR)/setup.sh"
 	find "$(STAGING_DIR)/features" "$(STAGING_DIR)/scripts" -type f -name '*.sh' -exec chmod +x {} +
 	tar -C "$(DIST_DIR)" -czf "$(DIST_DIR)/$(PACKAGE_NAME).tar.gz" "$(PACKAGE_NAME)"

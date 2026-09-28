@@ -1024,7 +1024,9 @@ dist/
 
 Mỗi archive chứa `bin/syssetup`, `features/`, `profiles/`, `scripts/`,
 `workflows/`, `workflow-configs/`, `checks/`,
-`setup.sh` và `README.md`. Giải nén trên server rồi chạy từ thư mục vừa tạo:
+`setup.sh`, `README.md` và `Version`. File `Version` chứa full Git commit hash,
+branch và URL của remote `origin` tại thời điểm tạo archive. Giải nén trên
+server rồi chạy từ thư mục vừa tạo:
 
 ```bash
 tar -xzf syssetup-0.2.0-linux-amd64.tar.gz

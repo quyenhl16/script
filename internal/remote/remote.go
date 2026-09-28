@@ -157,6 +157,74 @@ func Execute(ctx context.Context, request Request) []Result {
 	return results
 }
 
+// FetchDirectory runs one SSH command on the server that streams the
+// base64-encoded tar.gz of a remote directory back over stdout. The caller
+// decodes and extracts it locally so remote run artifacts (reports, annotated
+// workbooks) land on the machine the tool runs on, not only on the server.
+// A missing directory is reported as (nil, nil): the step may legitimately
+// produce no output (e.g. halted before its checker ran).
+func FetchDirectory(ctx context.Context, server Server, directory string, timeout time.Duration, hostKeys ssh.HostKeyCallback) ([]byte, error) {
+	directory = strings.TrimSpace(directory)
+	if directory == "" {
+		return nil, errors.New("remote directory cannot be empty")
+	}
+	if hostKeys == nil {
+		return nil, errors.New("host key verifier is required")
+	}
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	dialer := net.Dialer{}
+	connection, err := dialer.DialContext(ctx, "tcp", server.Address)
+	if err != nil {
+		return nil, fmt.Errorf("connect: %w", err)
+	}
+	defer connection.Close()
+	if deadline, ok := ctx.Deadline(); ok {
+		_ = connection.SetDeadline(deadline)
+	}
+	config := &ssh.ClientConfig{
+		User:            server.User,
+		Auth:            []ssh.AuthMethod{ssh.Password(server.Password)},
+		HostKeyCallback: hostKeys,
+		Timeout:         timeout,
+	}
+	clientConnection, channels, requests, err := ssh.NewClientConn(connection, server.Address, config)
+	if err != nil {
+		return nil, fmt.Errorf("SSH handshake: %w", err)
+	}
+	client := ssh.NewClient(clientConnection, channels, requests)
+	defer client.Close()
+
+	session, err := client.NewSession()
+	if err != nil {
+		return nil, fmt.Errorf("create SSH session: %w", err)
+	}
+	defer session.Close()
+	command := fmt.Sprintf("if [ -d %s ]; then tar -czf - -C $(dirname %s) $(basename %s) | base64 -w 76; fi",
+		quoteShellArgument(filepath.Clean(directory)),
+		quoteShellArgument(filepath.Clean(directory)),
+		quoteShellArgument(filepath.Clean(directory)))
+	var stdout, stderr bytes.Buffer
+	session.Stdout = &stdout
+	session.Stderr = &stderr
+	if err := session.Run(command); err != nil {
+		return nil, fmt.Errorf("fetch %s: %w (%s)", directory, err, strings.TrimSpace(stderr.String()))
+	}
+	encoded := strings.TrimSpace(stdout.String())
+	if encoded == "" {
+		return nil, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s payload: %w", directory, err)
+	}
+	return decoded, nil
+}
+
 func LoadArtifact(id, path string) (Artifact, error) {
 	if _, err := artifactEnvironmentName(id); err != nil {
 		return Artifact{}, err
