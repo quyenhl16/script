@@ -32,12 +32,6 @@
       "required": true
     },
     {
-      "id": "amf-smf-prefix-list",
-      "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='mm_service']/*[local-name()='nf_conf']/*[local-name()='smf_prefix_list']",
-      "reportOnly": true,
-      "required": true
-    },
-    {
       "id": "amf-default-nrf-uri",
       "xpath": "/*[local-name()='config']/*[local-name()='amf']/*[local-name()='mm_service']/*[local-name()='nf_conf']/*[local-name()='default_nrf_uri']",
       "reportOnly": true,
