@@ -33,7 +33,7 @@ def inline_cell(reference, value):
     return '<c r="{}" t="inlineStr"><is><t>{}</t></is></c>'.format(reference, escaped)
 
 
-def write_workbook(path, omit_attribute="", include_pv=False):
+def write_workbook(path, omit_attribute="", include_pv=False, pod_count=""):
     attributes = [
         ("mem_size", "4096", "32768"),
         ("num_cpus", "4000", "20000"),
@@ -44,6 +44,8 @@ def write_workbook(path, omit_attribute="", include_pv=False):
     ]
     if include_pv:
         attributes.append(("pv_storage", "10240", ""))
+    if pod_count:
+        attributes.append(("instantiation_number_of_instance_2", pod_count, "5"))
     rows = [
         '<row r="1">{}</row>'.format("".join([
             inline_cell("B1", "Thuộc tính"),
@@ -163,6 +165,24 @@ class ExcelBaselineTests(unittest.TestCase):
         self.assertEqual(storage["display"], "10240Mi")
         self.assertEqual(storage["source_cell"], "D8")
 
+    def test_reads_optional_pod_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "baseline.xlsx")
+            write_workbook(path, pod_count="3")
+            baseline = self.checker.read_baseline(baseline_arguments(path))
+
+        pod_count = baseline["components"]["comm"]["workload.pods.count"]
+        self.assertEqual(pod_count["normalized"], 3)
+        self.assertEqual(pod_count["display"], "3")
+        self.assertEqual(pod_count["source_cell"], "D8")
+
+    def test_rejects_invalid_pod_count(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "baseline.xlsx")
+            write_workbook(path, pod_count="3.5")
+            with self.assertRaisesRegex(self.checker.InputError, "pod count must be a non-negative integer"):
+                self.checker.read_baseline(baseline_arguments(path))
+
 
 class AuditTests(unittest.TestCase):
     def setUp(self):
@@ -261,6 +281,86 @@ class AuditTests(unittest.TestCase):
             init=True,
         )
         self.assertEqual(selected["name"], "prepare")
+
+    def test_checks_desired_and_ready_pod_counts(self):
+        workloads = [{
+            "kind": "Deployment",
+            "metadata": {"name": "comm", "labels": {}},
+            "spec": {"replicas": 3, "template": {"spec": {"containers": [{"name": "comm"}]}}},
+            "status": {"replicas": 3, "readyReplicas": 3},
+        }]
+        baseline = {
+            "components": {
+                "comm": {
+                    "workload.pods.count": {
+                        "normalized": 3,
+                        "display": "3",
+                        "resource_type": "pod_count",
+                        "source_cell": "D8",
+                    },
+                },
+            },
+            "expected_count": 1,
+        }
+        arguments = types.SimpleNamespace(
+            namespace="pramf01", ignore_extra="", extra_policy="warn", show_pass=True
+        )
+        original_snapshot = self.checker.workload_snapshot
+        self.checker.workload_snapshot = lambda namespace: workloads
+        try:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                stats = self.checker.audit(arguments, baseline, {})
+        finally:
+            self.checker.workload_snapshot = original_snapshot
+
+        self.assertEqual(stats["passed"], 1)
+        self.assertEqual(stats["failures"], 0)
+        self.assertIn("[PASS] [POD_COUNT]", output.getvalue())
+        self.assertIn("expected=3 desired=3 current=3 ready=3", output.getvalue())
+
+        workloads[0]["status"]["readyReplicas"] = 2
+        self.checker.workload_snapshot = lambda namespace: workloads
+        try:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                stats = self.checker.audit(arguments, baseline, {})
+        finally:
+            self.checker.workload_snapshot = original_snapshot
+
+        self.assertEqual(stats["mismatch"], 1)
+        self.assertEqual(stats["failures"], 1)
+        self.assertIn("[FAIL] [NOT_READY]", output.getvalue())
+        self.assertIn("expected=3 desired=3 current=3 ready=2", output.getvalue())
+
+        workloads[0]["spec"]["replicas"] = 2
+        self.checker.workload_snapshot = lambda namespace: workloads
+        try:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                stats = self.checker.audit(arguments, baseline, {})
+        finally:
+            self.checker.workload_snapshot = original_snapshot
+
+        self.assertEqual(stats["mismatch"], 1)
+        self.assertEqual(stats["failures"], 1)
+        self.assertIn("[FAIL] [MISMATCH]", output.getvalue())
+        self.assertIn("expected=3 desired=2 current=3 ready=2", output.getvalue())
+
+    def test_reads_daemonset_pod_counts(self):
+        workload = {
+            "kind": "DaemonSet",
+            "metadata": {"name": "agent"},
+            "status": {
+                "desiredNumberScheduled": 4,
+                "currentNumberScheduled": 4,
+                "numberReady": 3,
+            },
+        }
+        self.assertEqual(
+            self.checker.workload_pod_counts(workload),
+            {"desired": 4, "current": 4, "ready": 3},
+        )
 
     def test_checks_every_bound_pv_capacity_for_a_statefulset(self):
         workloads = [{

@@ -177,6 +177,11 @@ hay `2000m`/`2` được coi là bằng nhau. Resource chính được đối ch
 `containers[].resources`; resource init chỉ được kiểm tra khi Excel có giá trị
 `init_resources_*`.
 
+Dòng `instantiation_number_of_instance_2` là tùy chọn. Với mỗi service có giá
+trị ở dòng này, feature kiểm tra cả số replica mong muốn và số Pod Ready của
+workload. Deployment/StatefulSet dùng `spec.replicas` và `status.readyReplicas`;
+DaemonSet dùng `status.desiredNumberScheduled` và `status.numberReady`.
+
 Dòng `pv_storage` là tùy chọn. Với mỗi service có khai giá trị ở dòng này,
 feature tìm PVC được workload tham chiếu, theo `spec.template.spec.volumes` hoặc
 `volumeClaimTemplates` của StatefulSet, rồi kiểm tra `spec.capacity.storage` của

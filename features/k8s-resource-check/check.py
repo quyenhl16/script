@@ -35,6 +35,8 @@ RESOURCE_ATTRIBUTES = {
 }
 REQUIRED_RESOURCE_ATTRIBUTES = set(RESOURCE_ATTRIBUTES) - {"pv_storage"}
 PV_STORAGE_PATH = "persistentVolume.capacity.storage"
+POD_COUNT_ATTRIBUTE = "instantiation_number_of_instance_2"
+POD_COUNT_PATH = "workload.pods.count"
 
 CPU_MULTIPLIERS = {
     "": Decimal(1),
@@ -238,6 +240,13 @@ def parse_quantity(value, resource_type, default_unit="", apply_default=False):
     return number * multipliers[suffix]
 
 
+def parse_pod_count(value):
+    cleaned = clean_quantity(value)
+    if not re.fullmatch(r"[0-9]+", cleaned):
+        raise ValueError("pod count must be a non-negative integer")
+    return int(cleaned)
+
+
 def resource_path(scope, group, resource_name):
     return "{}.{}.{}".format(scope, group, resource_name)
 
@@ -281,13 +290,40 @@ def read_baseline(arguments):
     maximum_row = max((row for row, _ in cells), default=arguments.header_row)
     for row in range(arguments.header_row + 1, maximum_row + 1):
         attribute = cells.get((row, attribute_column), {}).get("value", "").strip()
-        if attribute not in RESOURCE_ATTRIBUTES:
+        if attribute not in RESOURCE_ATTRIBUTES and attribute != POD_COUNT_ATTRIBUTE:
             continue
         if attribute in found_attributes:
             raise InputError(
                 "duplicate resource attribute {} at rows {} and {}".format(attribute, found_attributes[attribute], row)
             )
         found_attributes[attribute] = row
+        if attribute == POD_COUNT_ATTRIBUTE:
+            for column, component in component_columns.items():
+                cell = cells.get((row, column))
+                if cell is None:
+                    continue
+                if cell["formula"]:
+                    formula_cells.append(cell["reference"])
+                    if not cell["cached"]:
+                        raise InputError(
+                            "{} is a formula without a cached value; recalculate and save the workbook".format(
+                                cell["reference"]
+                            )
+                        )
+                raw = clean_quantity(cell["value"])
+                if raw == "":
+                    continue
+                try:
+                    normalized = parse_pod_count(raw)
+                except ValueError as error:
+                    raise InputError("{} contains {}".format(cell["reference"], error)) from error
+                components[component][POD_COUNT_PATH] = {
+                    "normalized": normalized,
+                    "display": raw,
+                    "resource_type": "pod_count",
+                    "source_cell": cell["reference"],
+                }
+            continue
         scope, group, resource_name, resource_type = RESOURCE_ATTRIBUTES[attribute]
         default_unit = arguments.cpu_default_unit if resource_type == "cpu" else arguments.memory_default_unit
         for column, component in component_columns.items():
@@ -478,6 +514,33 @@ def flatten_resources(container, scope):
     return result
 
 
+def workload_pod_counts(workload):
+    kind = workload.get("kind", "").lower()
+    spec = workload.get("spec", {}) or {}
+    status = workload.get("status", {}) or {}
+    if kind in ("deployment", "statefulset"):
+        desired = spec.get("replicas", 1)
+        current_field = "currentReplicas" if kind == "statefulset" else "replicas"
+        current = status.get(current_field, 0)
+        ready = status.get("readyReplicas", 0)
+    elif kind == "daemonset":
+        desired = status.get("desiredNumberScheduled", 0)
+        current = status.get("currentNumberScheduled", 0)
+        ready = status.get("numberReady", 0)
+    else:
+        raise KubernetesError("workload kind {!r} does not support pod count checks".format(workload.get("kind", "")))
+
+    counts = {"desired": desired, "current": current, "ready": ready}
+    for name, value in counts.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise KubernetesError(
+                "workload {}/{} has invalid {} pod count: {!r}".format(
+                    workload.get("kind", "?"), workload.get("metadata", {}).get("name", "?"), name, value
+                )
+            )
+    return counts
+
+
 def workload_persistent_volumes(workload, claims, volumes):
     workload_name = workload.get("metadata", {}).get("name", "")
     claim_names = set()
@@ -627,6 +690,46 @@ def audit(arguments, baseline, mappings):
         print("  {}".format(workload_label))
 
         for path, rule in sorted(expected.items()):
+            if path == POD_COUNT_PATH:
+                try:
+                    counts = workload_pod_counts(workload)
+                except KubernetesError as error:
+                    stats["resolution_errors"] += 1
+                    component_stats["resolution_errors"] += 1
+                    component_stats["fail"] += 1
+                    print("[FAIL] [RESOLUTION] {} source={}".format(error, rule["source_cell"]))
+                    continue
+                if counts["desired"] != rule["normalized"]:
+                    stats["mismatch"] += 1
+                    component_stats["mismatch"] += 1
+                    component_stats["fail"] += 1
+                    print(
+                        "[FAIL] [MISMATCH] {}/{} expected={} desired={} current={} ready={} source={}".format(
+                            component, path, rule["display"], counts["desired"], counts["current"],
+                            counts["ready"], rule["source_cell"]
+                        )
+                    )
+                elif counts["ready"] != rule["normalized"]:
+                    stats["mismatch"] += 1
+                    component_stats["mismatch"] += 1
+                    component_stats["fail"] += 1
+                    print(
+                        "[FAIL] [NOT_READY] {}/{} expected={} desired={} current={} ready={} source={}".format(
+                            component, path, rule["display"], counts["desired"], counts["current"],
+                            counts["ready"], rule["source_cell"]
+                        )
+                    )
+                else:
+                    stats["passed"] += 1
+                    component_stats["pass"] += 1
+                    if arguments.show_pass:
+                        print(
+                            "[PASS] [POD_COUNT] {}/{} expected={} desired={} current={} ready={} source={}".format(
+                                component, path, rule["display"], counts["desired"], counts["current"],
+                                counts["ready"], rule["source_cell"]
+                            )
+                        )
+                continue
             if path == PV_STORAGE_PATH:
                 resolved = workload_persistent_volumes(workload, claims, volumes)
                 actual_display = display_persistent_volumes(resolved)
