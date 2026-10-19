@@ -203,7 +203,9 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 	if len(connectivityInvocations) != 1 || !contains(connectivityInvocations[0].Args, "ip_amf_self=") ||
 		!contains(connectivityInvocations[0].Args, "curl_amf_self_urls=") ||
 		!contains(connectivityInvocations[0].Args, "ip_nssf=") ||
-		!contains(connectivityInvocations[0].Args, "curl_nssf_urls=") {
+		!contains(connectivityInvocations[0].Args, "curl_nssf_urls=") ||
+		!contains(connectivityInvocations[0].Args, "ping_count=2") ||
+		!contains(connectivityInvocations[0].Args, "ping_timeout_seconds=2") {
 		t.Fatalf("optional NF parameters were not built from the connectivity profile: %#v", connectivityInvocations)
 	}
 	compareInvocations := config.Steps["xml-compare"]

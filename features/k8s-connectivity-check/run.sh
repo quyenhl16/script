@@ -18,6 +18,8 @@ ip_nrf="${SYSSETUP_PARAM_IP_NRF-68.240.36.193}"
 ip_eir="${SYSSETUP_PARAM_IP_EIR-68.240.136.1}"
 ip_nssf="${SYSSETUP_PARAM_IP_NSSF-68.240.136.2}"
 ip_gnodeb="${SYSSETUP_PARAM_IP_GNODEB-69.69.0.150}"
+ping_count="${SYSSETUP_PARAM_PING_COUNT:-2}"
+ping_timeout="${SYSSETUP_PARAM_PING_TIMEOUT_SECONDS:-2}"
 
 curl_ausf_urls="${SYSSETUP_PARAM_CURL_AUSF_URLS-http://68.240.36.153/}"
 curl_udm_urls="${SYSSETUP_PARAM_CURL_UDM_URLS-http://68.240.36.153/}"
@@ -49,6 +51,8 @@ parse_workflow_arguments() {
       ip_eir=*) ip_eir="${argument#*=}" ;;
       ip_nssf=*) ip_nssf="${argument#*=}" ;;
       ip_gnodeb=*) ip_gnodeb="${argument#*=}" ;;
+      ping_count=*) ping_count="${argument#*=}" ;;
+      ping_timeout_seconds=*) ping_timeout="${argument#*=}" ;;
       curl_ausf_urls=*) curl_ausf_urls="${argument#*=}" ;;
       curl_udm_urls=*) curl_udm_urls="${argument#*=}" ;;
       curl_smf_urls=*) curl_smf_urls="${argument#*=}" ;;
@@ -236,6 +240,15 @@ validate_configuration() {
     validate_url_list "$name" "$value" || return 2
   done
 
+  if [[ ! "$ping_count" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'ping_count must be a positive integer\n' >&2
+    return 2
+  fi
+  if [[ ! "$ping_timeout" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'ping_timeout_seconds must be a positive integer\n' >&2
+    return 2
+  fi
+
   if [[ ! "$curl_connect_timeout" =~ ^[1-9][0-9]*$ ]]; then
     printf 'curl_connect_timeout_seconds must be a positive integer\n' >&2
     return 2
@@ -337,7 +350,8 @@ phase_check_ospf() {
 ping_from_pod() {
   local pod="$1"
   local target="$2"
-  kubectl exec -n "$namespace" "$pod" -- ping -c 2 -W 2 "$target" >/dev/null 2>&1
+  kubectl exec -n "$namespace" "$pod" -- \
+    ping -c "$ping_count" -W "$ping_timeout" "$target" >/dev/null 2>&1
 }
 
 phase_check_connectivity() {
@@ -376,7 +390,7 @@ phase_check_connectivity() {
     for pod in "${ipgw_pods[@]}"; do
       for target_ip in "${gnodeb_targets[@]}"; do
         if kubectl exec -n "$namespace" "$pod" -- \
-          sudo -n ping -c 2 -W 2 -I "$vip_ipgw" "$target_ip" >/dev/null 2>&1; then
+          sudo -n ping -c "$ping_count" -W "$ping_timeout" -I "$vip_ipgw" "$target_ip" >/dev/null 2>&1; then
           pass "Pod [$pod]: $vip_ipgw -> gNodeB $target_ip"
         else
           fail "Pod [$pod]: $vip_ipgw cannot reach gNodeB $target_ip"

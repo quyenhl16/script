@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.5.2",
+  "version": "1.6.0",
   "description": "Audit pod VIPs, OSPF adjacencies, ping paths and HTTP connectivity to peer NFs",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
@@ -79,6 +79,16 @@
       "type": "string",
       "description": "gNodeB IPv4 list, separated by commas or spaces",
       "default": "69.69.0.150"
+    },
+    "ping_count": {
+      "type": "integer",
+      "description": "Number of ICMP echo requests sent for each ping check",
+      "default": 2
+    },
+    "ping_timeout_seconds": {
+      "type": "integer",
+      "description": "Maximum time to wait for each ICMP echo reply",
+      "default": 2
     },
     "curl_ausf_urls": {
       "type": "string",

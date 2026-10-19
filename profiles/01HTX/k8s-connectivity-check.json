@@ -20,6 +20,8 @@
         "ip_eir": "68.240.136.1",
         "ip_nssf": "",
         "ip_gnodeb": "69.69.0.150",
+        "ping_count": 2,
+        "ping_timeout_seconds": 2,
         "curl_ausf_urls": "http://68.240.36.153/",
         "curl_udm_urls": "http://68.240.36.153/",
         "curl_smf_urls": "http://68.240.36.105/",

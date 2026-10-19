@@ -56,9 +56,16 @@ hỗ trợ:
   "ip_amf_self": "192.0.2.34",
   "ip_eir": "192.0.2.41",
   "ip_nssf": "",
-  "ip_gnodeb": "198.51.100.10, 198.51.100.11"
+  "ip_gnodeb": "198.51.100.10, 198.51.100.11",
+  "ping_count": 2,
+  "ping_timeout_seconds": 2
 }
 ```
+
+`ping_count` là số ICMP echo request cho mỗi lần kiểm tra và
+`ping_timeout_seconds` là thời gian chờ tối đa cho từng echo reply. Nếu không
+cấu hình, cả hai tham số dùng giá trị mặc định là `2`; giá trị cấu hình phải là
+số nguyên dương.
 
 Phase `curl` chạy từ từng MM pod đến các URL của AUSF, UDM, SMF, AMF remote,
 NRF, EIR và NSSF. Mỗi tham số `curl_*_urls` nhận một hoặc nhiều URL HTTP(S), cho
