@@ -20,6 +20,10 @@ ip_nssf="${SYSSETUP_PARAM_IP_NSSF-68.240.136.2}"
 ip_gnodeb="${SYSSETUP_PARAM_IP_GNODEB-69.69.0.150}"
 ping_count="${SYSSETUP_PARAM_PING_COUNT:-2}"
 ping_timeout="${SYSSETUP_PARAM_PING_TIMEOUT_SECONDS:-2}"
+parallel_interfaces="${SYSSETUP_PARAM_PARALLEL_INTERFACES:-true}"
+max_parallel_pods="${SYSSETUP_PARAM_MAX_PARALLEL_PODS:-10}"
+max_parallel_nfs_per_pod="${SYSSETUP_PARAM_MAX_PARALLEL_NFS_PER_POD:-1}"
+max_total_parallel_jobs="${SYSSETUP_PARAM_MAX_TOTAL_PARALLEL_JOBS:-10}"
 
 curl_ausf_urls="${SYSSETUP_PARAM_CURL_AUSF_URLS-http://68.240.36.153/}"
 curl_udm_urls="${SYSSETUP_PARAM_CURL_UDM_URLS-http://68.240.36.153/}"
@@ -53,6 +57,10 @@ parse_workflow_arguments() {
       ip_gnodeb=*) ip_gnodeb="${argument#*=}" ;;
       ping_count=*) ping_count="${argument#*=}" ;;
       ping_timeout_seconds=*) ping_timeout="${argument#*=}" ;;
+      parallel_interfaces=*) parallel_interfaces="${argument#*=}" ;;
+      max_parallel_pods=*) max_parallel_pods="${argument#*=}" ;;
+      max_parallel_nfs_per_pod=*) max_parallel_nfs_per_pod="${argument#*=}" ;;
+      max_total_parallel_jobs=*) max_total_parallel_jobs="${argument#*=}" ;;
       curl_ausf_urls=*) curl_ausf_urls="${argument#*=}" ;;
       curl_udm_urls=*) curl_udm_urls="${argument#*=}" ;;
       curl_smf_urls=*) curl_smf_urls="${argument#*=}" ;;
@@ -248,6 +256,22 @@ validate_configuration() {
     printf 'ping_timeout_seconds must be a positive integer\n' >&2
     return 2
   fi
+  if [[ "$parallel_interfaces" != true && "$parallel_interfaces" != false ]]; then
+    printf 'parallel_interfaces must be true or false\n' >&2
+    return 2
+  fi
+  if [[ ! "$max_parallel_pods" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'max_parallel_pods must be a positive integer\n' >&2
+    return 2
+  fi
+  if [[ ! "$max_parallel_nfs_per_pod" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'max_parallel_nfs_per_pod must be a positive integer\n' >&2
+    return 2
+  fi
+  if [[ ! "$max_total_parallel_jobs" =~ ^[1-9][0-9]*$ ]]; then
+    printf 'max_total_parallel_jobs must be a positive integer\n' >&2
+    return 2
+  fi
 
   if [[ ! "$curl_connect_timeout" =~ ^[1-9][0-9]*$ ]]; then
     printf 'curl_connect_timeout_seconds must be a positive integer\n' >&2
@@ -347,11 +371,164 @@ phase_check_ospf() {
   done
 }
 
-ping_from_pod() {
+parallel_root=''
+declare -a background_pids=()
+
+parallel_runtime_cleanup() {
+  local pid
+  for pid in "${background_pids[@]}"; do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+  for pid in "${background_pids[@]}"; do
+    wait "$pid" >/dev/null 2>&1 || true
+  done
+  background_pids=()
+  if [[ -n "$parallel_root" && -d "$parallel_root" ]]; then
+    rm -rf -- "$parallel_root"
+  fi
+}
+
+parallel_runtime_init() {
+  parallel_root="$(mktemp -d "${TMPDIR:-/tmp}/k8s-connectivity-check.XXXXXX")" || return 1
+  mkdir -p "$parallel_root/pod-slots" "$parallel_root/job-slots"
+
+  trap parallel_runtime_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}
+
+acquire_parallel_slot() {
+  local pool="$1"
+  local limit="$2"
+  local index
+  local slot
+
+  while true; do
+    for ((index = 0; index < limit; index++)); do
+      slot="$pool/$index"
+      if mkdir "$slot" 2>/dev/null; then
+        printf '%s' "$slot"
+        return
+      fi
+    done
+    sleep 0.02
+  done
+}
+
+release_parallel_slot() {
+  rmdir -- "$1" 2>/dev/null || true
+}
+
+launch_background() {
+  "$@" &
+  background_pids+=("$!")
+}
+
+wait_for_background() {
+  local pid
+  for pid in "${background_pids[@]}"; do
+    wait "$pid" || true
+  done
+  background_pids=()
+}
+
+write_probe_result() {
+  local path="$1"
+  local status="$2"
+  local message="$3"
+  printf '%s\n%s\n' "$status" "$message" > "$path"
+}
+
+render_probe_results() {
+  local directory="$1"
+  local file
+  local status
+  local message
+
+  for file in "$directory"/*.result; do
+    [[ -f "$file" ]] || continue
+    IFS= read -r status < "$file"
+    message="$(tail -n +2 "$file")"
+    if [[ "$status" == PASS ]]; then
+      pass "$message"
+    else
+      fail "$message"
+    fi
+  done
+}
+
+ping_probe_task() {
   local pod="$1"
-  local target="$2"
-  kubectl exec -n "$namespace" "$pod" -- \
-    ping -c "$ping_count" -W "$ping_timeout" "$target" >/dev/null 2>&1
+  local mode="$2"
+  local label="$3"
+  local target="$4"
+  local result_file="$5"
+  local job_slot
+
+  job_slot="$(acquire_parallel_slot "$parallel_root/job-slots" "$max_total_parallel_jobs")"
+  case "$mode" in
+    gnodeb)
+      if kubectl exec -n "$namespace" "$pod" -- \
+        sudo -n ping -c "$ping_count" -W "$ping_timeout" -I "$vip_ipgw" "$target" >/dev/null 2>&1; then
+        write_probe_result "$result_file" PASS "Pod [$pod]: $vip_ipgw -> gNodeB $target"
+      else
+        write_probe_result "$result_file" FAIL "Pod [$pod]: $vip_ipgw cannot reach gNodeB $target"
+      fi
+      ;;
+    comm)
+      if kubectl exec -n "$namespace" "$pod" -- \
+        ping -c "$ping_count" -W "$ping_timeout" "$target" >/dev/null 2>&1; then
+        write_probe_result "$result_file" PASS "Pod [$pod]: COMM VIP $target is reachable"
+      else
+        write_probe_result "$result_file" FAIL "Pod [$pod]: COMM VIP $target is unreachable"
+      fi
+      ;;
+    gtp)
+      if kubectl exec -n "$namespace" "$pod" -- \
+        ping -c "$ping_count" -W "$ping_timeout" "$target" >/dev/null 2>&1; then
+        write_probe_result "$result_file" PASS "Pod [$pod]: GTP VIP $target is reachable"
+      else
+        write_probe_result "$result_file" FAIL "Pod [$pod]: GTP VIP $target is unreachable"
+      fi
+      ;;
+    peer)
+      if kubectl exec -n "$namespace" "$pod" -- \
+        ping -c "$ping_count" -W "$ping_timeout" "$target" >/dev/null 2>&1; then
+        write_probe_result "$result_file" PASS "Pod [$pod]: path to $label ($target) is reachable"
+      else
+        write_probe_result "$result_file" FAIL "Pod [$pod]: path to $label ($target) is unreachable"
+      fi
+      ;;
+  esac
+  release_parallel_slot "$job_slot"
+}
+
+run_ping_pod_worker() {
+  local pod="$1"
+  local manifest="$2"
+  local mode
+  local label
+  local target
+  local result_file
+  local pid
+  local pod_slot
+  local -a probe_pids=()
+
+  pod_slot="$(acquire_parallel_slot "$parallel_root/pod-slots" "$max_parallel_pods")"
+  while IFS=$'\t' read -r mode label target result_file; do
+    ping_probe_task "$pod" "$mode" "$label" "$target" "$result_file" &
+    probe_pids+=("$!")
+    if ((${#probe_pids[@]} >= max_parallel_nfs_per_pod)); then
+      for pid in "${probe_pids[@]}"; do
+        wait "$pid" || true
+      done
+      probe_pids=()
+    fi
+  done < "$manifest"
+  for pid in "${probe_pids[@]}"; do
+    wait "$pid" || true
+  done
+  release_parallel_slot "$pod_slot"
 }
 
 phase_check_connectivity() {
@@ -359,11 +536,19 @@ phase_check_connectivity() {
   local nf_name
   local target_ip
   local prober_mm_pod=''
+  local manifest
+  local result_file
+  local result_index
   local -a gnodeb_targets
   local -a ipgw_pods
   local -a mm_pods
   local -a nf_names=(AUSF UDM SMF AMF_SELF AMF_REMOTE NRF EIR NSSF)
   local -a target_ips
+  local ping_dir="$parallel_root/ping"
+  local n2_dir="$ping_dir/3.1"
+  local comm_dir="$ping_dir/3.2"
+  local gtp_dir="$ping_dir/3.3"
+  local peer_dir="$ping_dir/3.4"
   declare -A nf_targets=(
     [AUSF]="$ip_ausf"
     [UDM]="$ip_udm"
@@ -375,67 +560,80 @@ phase_check_connectivity() {
     [NSSF]="$ip_nssf"
   )
 
+  mkdir -p "$n2_dir" "$comm_dir" "$gtp_dir" "$peer_dir"
   heading '[PHASE 3] VERIFYING NETWORK CONNECTIVITY (PING TESTS)'
   mapfile -t mm_pods < <(get_running_pods mm)
+  mapfile -t ipgw_pods < <(get_running_pods ipgw)
+  read -r -a gnodeb_targets <<< "${ip_gnodeb//,/ }"
   if ((${#mm_pods[@]} > 0)); then
     prober_mm_pod="${mm_pods[0]}"
   fi
 
-  printf '\n%s 3.1 N2: IPGW VIP -> gNodeB%s\n' "$yellow" "$reset"
-  mapfile -t ipgw_pods < <(get_running_pods ipgw)
-  read -r -a gnodeb_targets <<< "${ip_gnodeb//,/ }"
+  result_index=0
   if ((${#ipgw_pods[@]} == 0)); then
-    fail 'No running IPGW pod found'
+    printf -v result_file '%s/%06d.result' "$n2_dir" "$result_index"
+    write_probe_result "$result_file" FAIL 'No running IPGW pod found'
   else
     for pod in "${ipgw_pods[@]}"; do
+      manifest="$parallel_root/ping-n2-$result_index.manifest"
+      : > "$manifest"
       for target_ip in "${gnodeb_targets[@]}"; do
-        if kubectl exec -n "$namespace" "$pod" -- \
-          sudo -n ping -c "$ping_count" -W "$ping_timeout" -I "$vip_ipgw" "$target_ip" >/dev/null 2>&1; then
-          pass "Pod [$pod]: $vip_ipgw -> gNodeB $target_ip"
-        else
-          fail "Pod [$pod]: $vip_ipgw cannot reach gNodeB $target_ip"
-        fi
+        printf -v result_file '%s/%06d.result' "$n2_dir" "$result_index"
+        printf 'gnodeb\tN2\t%s\t%s\n' "$target_ip" "$result_file" >> "$manifest"
+        result_index=$((result_index + 1))
       done
+      launch_background run_ping_pod_worker "$pod" "$manifest"
     done
   fi
+  [[ "$parallel_interfaces" == true ]] || wait_for_background
 
-  printf '\n%s 3.2 SBI-Server: MM pod -> COMM VIP%s\n' "$yellow" "$reset"
   if [[ -z "$prober_mm_pod" ]]; then
-    fail 'No running MM pod found to act as prober'
-  elif ping_from_pod "$prober_mm_pod" "$vip_comm"; then
-    pass "Pod [$prober_mm_pod]: COMM VIP $vip_comm is reachable"
+    write_probe_result "$comm_dir/000000.result" FAIL 'No running MM or MM Controller pod found to act as prober'
   else
-    fail "Pod [$prober_mm_pod]: COMM VIP $vip_comm is unreachable"
+    manifest="$parallel_root/ping-comm.manifest"
+    printf 'comm\tCOMM\t%s\t%s\n' "$vip_comm" "$comm_dir/000000.result" > "$manifest"
+    launch_background run_ping_pod_worker "$prober_mm_pod" "$manifest"
   fi
+  [[ "$parallel_interfaces" == true ]] || wait_for_background
 
-  printf '\n%s 3.3 N26: MM pod -> GTP VIP%s\n' "$yellow" "$reset"
   if [[ -z "$prober_mm_pod" ]]; then
-    fail 'No running MM pod found to act as prober'
-  elif ping_from_pod "$prober_mm_pod" "$vip_gtp"; then
-    pass "Pod [$prober_mm_pod]: GTP VIP $vip_gtp is reachable"
+    write_probe_result "$gtp_dir/000000.result" FAIL 'No running MM or MM Controller pod found to act as prober'
   else
-    fail "Pod [$prober_mm_pod]: GTP VIP $vip_gtp is unreachable"
+    manifest="$parallel_root/ping-gtp.manifest"
+    printf 'gtp\tGTP\t%s\t%s\n' "$vip_gtp" "$gtp_dir/000000.result" > "$manifest"
+    launch_background run_ping_pod_worker "$prober_mm_pod" "$manifest"
   fi
+  [[ "$parallel_interfaces" == true ]] || wait_for_background
 
-  printf '\n%s 3.4 SBI-Client: MM pods -> peer NFs%s\n' "$yellow" "$reset"
+  result_index=0
   if ((${#mm_pods[@]} == 0)); then
-    fail 'No running MM pods found for peer NF checks'
+    write_probe_result "$peer_dir/000000.result" FAIL 'No running MM or MM Controller pods found for peer NF checks'
   else
     for pod in "${mm_pods[@]}"; do
-      printf '  Pod: [%s]\n' "$pod"
+      manifest="$parallel_root/ping-peer-$result_index.manifest"
+      : > "$manifest"
       for nf_name in "${nf_names[@]}"; do
         target_ips=()
         read -r -a target_ips <<< "${nf_targets[$nf_name]//,/ }"
         for target_ip in "${target_ips[@]}"; do
-          if ping_from_pod "$pod" "$target_ip"; then
-            pass "Pod [$pod]: path to $nf_name ($target_ip) is reachable"
-          else
-            fail "Pod [$pod]: path to $nf_name ($target_ip) is unreachable"
-          fi
+          printf -v result_file '%s/%06d.result' "$peer_dir" "$result_index"
+          printf 'peer\t%s\t%s\t%s\n' "$nf_name" "$target_ip" "$result_file" >> "$manifest"
+          result_index=$((result_index + 1))
         done
       done
+      launch_background run_ping_pod_worker "$pod" "$manifest"
     done
   fi
+  wait_for_background
+
+  printf '\n%s 3.1 N2: IPGW VIP -> gNodeB%s\n' "$yellow" "$reset"
+  render_probe_results "$n2_dir"
+  printf '\n%s 3.2 SBI-Server: MM/MM Controller pod -> COMM VIP%s\n' "$yellow" "$reset"
+  render_probe_results "$comm_dir"
+  printf '\n%s 3.3 N26: MM/MM Controller pod -> GTP VIP%s\n' "$yellow" "$reset"
+  render_probe_results "$gtp_dir"
+  printf '\n%s 3.4 SBI-Client: MM/MM Controller pods -> peer NFs%s\n' "$yellow" "$reset"
+  render_probe_results "$peer_dir"
 }
 
 url_for_log() {
@@ -445,15 +643,17 @@ url_for_log() {
   printf '%s' "$value"
 }
 
-curl_from_pod() {
+curl_probe_task() {
   local pod="$1"
   local nf_name="$2"
   local url="$3"
+  local result_file="$4"
   local response
   local http_code
   local status
   local detail
   local display_url
+  local job_slot
   local -a curl_args=(
     curl
     --silent
@@ -467,13 +667,15 @@ curl_from_pod() {
   if [[ "$curl_insecure" == true ]]; then
     curl_args+=(--insecure)
   fi
+  job_slot="$(acquire_parallel_slot "$parallel_root/job-slots" "$max_total_parallel_jobs")"
   response="$(kubectl exec -n "$namespace" "$pod" -- "${curl_args[@]}" "$url" 2>&1)"
   status=$?
   http_code="${response##*$'\n'}"
   display_url="$(url_for_log "$url")"
 
   if ((status == 0)) && [[ "$http_code" =~ ^[1-5][0-9][0-9]$ ]]; then
-    pass "Pod [$pod]: NF [$nf_name] $display_url is reachable (HTTP $http_code)"
+    write_probe_result "$result_file" PASS "Pod [$pod]: NF [$nf_name] $display_url is reachable (HTTP $http_code)"
+    release_parallel_slot "$job_slot"
     return
   fi
 
@@ -481,13 +683,56 @@ curl_from_pod() {
   detail="${detail//$'\n'/ }"
   detail="${detail:0:240}"
   [[ -n "$detail" ]] || detail="curl exited with status $status"
-  fail "Pod [$pod]: NF [$nf_name] $display_url is unreachable ($detail)"
+  write_probe_result "$result_file" FAIL "Pod [$pod]: NF [$nf_name] $display_url is unreachable ($detail)"
+  release_parallel_slot "$job_slot"
+}
+
+run_curl_pod_worker() {
+  local pod="$1"
+  local availability_result="$2"
+  local manifest="$3"
+  local nf_name
+  local url
+  local result_file
+  local pid
+  local pod_slot
+  local job_slot
+  local -a probe_pids=()
+
+  pod_slot="$(acquire_parallel_slot "$parallel_root/pod-slots" "$max_parallel_pods")"
+  job_slot="$(acquire_parallel_slot "$parallel_root/job-slots" "$max_total_parallel_jobs")"
+  if ! kubectl exec -n "$namespace" "$pod" -- curl --version >/dev/null 2>&1; then
+    write_probe_result "$availability_result" FAIL "Pod [$pod]: curl is not available in the selected container"
+    release_parallel_slot "$job_slot"
+    release_parallel_slot "$pod_slot"
+    return
+  fi
+  release_parallel_slot "$job_slot"
+
+  while IFS=$'\t' read -r nf_name url result_file; do
+    curl_probe_task "$pod" "$nf_name" "$url" "$result_file" &
+    probe_pids+=("$!")
+    if ((${#probe_pids[@]} >= max_parallel_nfs_per_pod)); then
+      for pid in "${probe_pids[@]}"; do
+        wait "$pid" || true
+      done
+      probe_pids=()
+    fi
+  done < "$manifest"
+  for pid in "${probe_pids[@]}"; do
+    wait "$pid" || true
+  done
+  release_parallel_slot "$pod_slot"
 }
 
 phase_check_http() {
   local pod
   local nf_name
   local url
+  local manifest
+  local result_file
+  local availability_result
+  local result_index=0
   local -a mm_pods
   local -a target_urls
   local -a nf_names=(AUSF UDM SMF AMF_SELF AMF_REMOTE NRF EIR NSSF)
@@ -504,28 +749,37 @@ phase_check_http() {
 
   heading '[PHASE 4] VERIFYING PEER NF HTTP CONNECTIVITY (CURL)'
   mapfile -t mm_pods < <(get_running_pods mm)
+  local curl_dir="$parallel_root/curl"
+  mkdir -p "$curl_dir"
   if ((${#mm_pods[@]} == 0)); then
-    fail 'No running MM pods found for peer NF curl checks'
+    write_probe_result "$curl_dir/000000.result" FAIL 'No running MM or MM Controller pods found for peer NF curl checks'
+    render_probe_results "$curl_dir"
     return
   fi
 
   for pod in "${mm_pods[@]}"; do
-    printf '\n  Pod: [%s]\n' "$pod"
-    if ! kubectl exec -n "$namespace" "$pod" -- curl --version >/dev/null 2>&1; then
-      fail "Pod [$pod]: curl is not available in the selected container"
-      continue
-    fi
+    printf -v availability_result '%s/%06d.result' "$curl_dir" "$result_index"
+    result_index=$((result_index + 1))
+    manifest="$parallel_root/curl-$result_index.manifest"
+    : > "$manifest"
     for nf_name in "${nf_names[@]}"; do
       target_urls=()
       read -r -a target_urls <<< "${nf_urls[$nf_name]//,/ }"
       for url in "${target_urls[@]}"; do
-        curl_from_pod "$pod" "$nf_name" "$url"
+        printf -v result_file '%s/%06d.result' "$curl_dir" "$result_index"
+        printf '%s\t%s\t%s\n' "$nf_name" "$url" "$result_file" >> "$manifest"
+        result_index=$((result_index + 1))
       done
     done
+    launch_background run_curl_pod_worker "$pod" "$availability_result" "$manifest"
   done
+  wait_for_background
+  render_probe_results "$curl_dir"
 }
 
 run_checklist() {
+  parallel_runtime_init || return
+
   case "$phase" in
     vip) phase_check_vip ;;
     ospf) phase_check_ospf ;;

@@ -205,7 +205,9 @@ func TestBundledPostDeploymentValidationWorkflow(t *testing.T) {
 		!contains(connectivityInvocations[0].Args, "ip_nssf=") ||
 		!contains(connectivityInvocations[0].Args, "curl_nssf_urls=") ||
 		!contains(connectivityInvocations[0].Args, "ping_count=2") ||
-		!contains(connectivityInvocations[0].Args, "ping_timeout_seconds=2") {
+		!contains(connectivityInvocations[0].Args, "ping_timeout_seconds=2") ||
+		!contains(connectivityInvocations[0].Args, "max_parallel_pods=10") ||
+		!contains(connectivityInvocations[0].Args, "max_total_parallel_jobs=10") {
 		t.Fatalf("optional NF parameters were not built from the connectivity profile: %#v", connectivityInvocations)
 	}
 	compareInvocations := config.Steps["xml-compare"]

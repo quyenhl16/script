@@ -58,7 +58,11 @@ hỗ trợ:
   "ip_nssf": "",
   "ip_gnodeb": "198.51.100.10, 198.51.100.11",
   "ping_count": 2,
-  "ping_timeout_seconds": 2
+  "ping_timeout_seconds": 2,
+  "parallel_interfaces": true,
+  "max_parallel_pods": 10,
+  "max_parallel_nfs_per_pod": 1,
+  "max_total_parallel_jobs": 10
 }
 ```
 
@@ -66,6 +70,15 @@ hỗ trợ:
 `ping_timeout_seconds` là thời gian chờ tối đa cho từng echo reply. Nếu không
 cấu hình, cả hai tham số dùng giá trị mặc định là `2`; giá trị cấu hình phải là
 số nguyên dương.
+
+Các nhóm ping N2, SBI-Server, N26 và SBI-Client chạy đồng thời khi
+`parallel_interfaces` là `true`. Các pod `mm-*` (bao gồm `mm-controller-*`) và
+IPGW được giới hạn bởi `max_parallel_pods`; mặc định tối đa `10` pod worker.
+Trong mỗi pod, các NF chạy lần lượt theo mặc định
+`max_parallel_nfs_per_pod=1`. Tổng số lệnh kiểm tra `kubectl exec` đồng thời
+không vượt quá `max_total_parallel_jobs`, mặc định là `10`. Đặt
+`parallel_interfaces=false`, `max_parallel_pods=1` và
+`max_total_parallel_jobs=1` để chạy tuần tự.
 
 Phase `curl` chạy từ từng MM pod đến các URL của AUSF, UDM, SMF, AMF remote,
 NRF, EIR và NSSF. Mỗi tham số `curl_*_urls` nhận một hoặc nhiều URL HTTP(S), cho

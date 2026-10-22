@@ -2,7 +2,7 @@
   "apiVersion": "syssetup/v1",
   "id": "k8s-connectivity-check",
   "name": "Kubernetes connectivity check",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Audit pod VIPs, OSPF adjacencies, ping paths and HTTP connectivity to peer NFs",
   "entrypoint": "run.sh",
   "supportedOS": ["rhel", "centos", "rocky", "almalinux", "fedora"],
@@ -89,6 +89,26 @@
       "type": "integer",
       "description": "Maximum time to wait for each ICMP echo reply",
       "default": 2
+    },
+    "parallel_interfaces": {
+      "type": "boolean",
+      "description": "Run the N2, SBI-Server, N26 and SBI-Client ping groups concurrently",
+      "default": true
+    },
+    "max_parallel_pods": {
+      "type": "integer",
+      "description": "Maximum number of MM, MM Controller or IPGW pod workers running concurrently",
+      "default": 10
+    },
+    "max_parallel_nfs_per_pod": {
+      "type": "integer",
+      "description": "Maximum number of peer NF checks running concurrently inside each pod",
+      "default": 1
+    },
+    "max_total_parallel_jobs": {
+      "type": "integer",
+      "description": "Maximum number of kubectl exec connectivity probes running concurrently",
+      "default": 10
     },
     "curl_ausf_urls": {
       "type": "string",

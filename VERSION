@@ -1,0 +1,11 @@
+VERSION=0.0.26
+TAG=0.0.26
+COMMIT=HEAD
+BASE_COMMIT=339911876736eb1fe96cf84b28ad98802b99d981
+BRANCH=main
+REMOTE_NAME=origin
+REMOTE_URL=https://github.com/quyenhl16/script.git
+
+# NOTE: Update this file for every commit. COMMIT intentionally uses HEAD because
+# embedding a commit's own hash in that commit is self-referential. Resolve the
+# exact current hash with: git rev-parse HEAD
